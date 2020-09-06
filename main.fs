@@ -50,9 +50,16 @@ type Srv() =
                 Ok [||]
             else
                 Error "Twalk on random files unimplemented"
-        member s.Topen (fid: uint32) (mode: uint8) =
-            printfn "got Topen %d %d" fid mode
-            Error "Topen unimplemented"
+        member s.Topen (fid: uint32) (mode: OpenMode) =
+            printfn "got Topen %d %A" fid mode
+            if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
+                Error "read only file system"
+            else
+                try
+                    Ok (qids.[fid], 0u)
+                with
+                | :? System.ArgumentException ->
+                    Error "fid unknown or out of range"
         member s.Tread (fid: uint32) (offset: uint64) (count: uint32) =
             printfn "got Tread %d %d %d" fid offset count
             Error "Tread unimplemented"

@@ -1,5 +1,14 @@
 namespace NineP
 
+[<System.Flags>]
+type OpenMode =
+    | Read   = 0uy
+    | Write  = 1uy
+    | Rdwr   = 2uy
+    | Exec   = 3uy
+    | Trunc  = 0x10uy
+    | Rclose = 0x40uy
+
 type FileType =
     |  Dir    = 0b10000000uy
     |  Append = 0b01000000uy
@@ -79,7 +88,7 @@ type IServer =
     abstract Tauth: afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
     abstract Tattach: fid: uint32 -> afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
     abstract Twalk: fid: uint32 -> newfid: uint32 -> wnames: string [] -> Result<Qid [], string>
-    abstract Topen: fid: uint32 -> mode: uint8 -> Result<Qid * uint32, string>
+    abstract Topen: fid: uint32 -> mode: OpenMode -> Result<Qid * uint32, string>
     abstract Tread: fid: uint32 -> offset: uint64 -> count: uint32 -> Result<uint32 * IEnumerable<byte>, string>
     abstract Tclunk: fid: uint32 -> Result<unit, string>
     abstract Tstat: fid: uint32 -> Result<Stat, string>
@@ -174,6 +183,17 @@ module P2000 =
                     w.Write q.Type
                     w.Write q.Ver
                     w.Write q.Path
+            | Error err -> rerror w tag err
+        | MsgType.Topen ->
+            match srv.Topen (r.ReadUInt32()) (LanguagePrimitives.EnumOfValue<uint8, OpenMode>(r.ReadByte())) with
+            | Ok (q, iounit) ->
+                w.Write (uint32 (4+1+2+13+4))
+                w.Write (uint8 MsgType.Ropen)
+                w.Write tag
+                w.Write q.Type
+                w.Write q.Ver
+                w.Write q.Path
+                w.Write iounit
             | Error err -> rerror w tag err
         | MsgType.Tclunk ->
             match srv.Tclunk (r.ReadUInt32()) with
