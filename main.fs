@@ -34,7 +34,7 @@ type Srv() =
             else
                 Ok (_msize, "unknown")
         member s.Tauth(afid: uint32) (uname: string) (aname: string) =
-            Error ""
+            Error "no authentication required"
         member s.Tattach(fid: uint32) (afid: uint32) (uname: string) (aname: string) =
             printfn "got Tattach %d %d %s %s" fid afid uname aname
             // TODO: return error if fid in use
