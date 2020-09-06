@@ -63,7 +63,7 @@ type Stat =
       Gid: string
       Muid: string } with
         member s.Size (): uint16 =
-            uint16 (sizeof<uint16> + // size
+            uint16 (
             sizeof<uint16> +
             sizeof<uint32> +
               sizeof<uint8> + // qid
@@ -205,11 +205,11 @@ module P2000 =
         | MsgType.Tstat ->
             match srv.Tstat (r.ReadUInt32()) with
             | Ok st ->
-                w.Write (4u+1u+2u+2u+(uint32 (st.Size ())))
+                w.Write (4u+1u+2u+2u+2u+(uint32 (st.Size ())))
                 w.Write (uint8 MsgType.Rstat)
                 w.Write tag
+                w.Write (st.Size ()+2us)
                 w.Write (st.Size ())
-                w.Write (st.Size ()-2us)
                 w.Write st.Type
                 w.Write st.Dev
                 w.Write st.Qid.Type
