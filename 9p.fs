@@ -1,5 +1,18 @@
 namespace NineP
 
+type NinePReader(args: System.IO.Stream) =
+    inherit System.IO.BinaryReader(args)
+
+    override r.ReadString() = (System.Text.Encoding.UTF8.GetString(r.ReadBytes(int32 (r.ReadUInt16()))))
+
+type NinePWriter(args: System.IO.Stream) =
+    inherit System.IO.BinaryWriter(args)
+
+    override w.Write (s: string) =
+        let bytes = System.Text.Encoding.UTF8.GetBytes(s)
+        w.Write (uint16 bytes.Length)
+        w.Write bytes
+
 [<System.Flags>]
 type OpenMode =
     | Read   = 0uy
@@ -82,29 +95,40 @@ type Stat =
             sizeof<uint16> +
             System.Text.Encoding.UTF8.GetByteCount(s.Muid))
 
-open System.Collections.Generic // IEnumerable
+        // FIXME: ugly
+        member st.writeTo (w: NinePWriter) =
+            w.Write (st.Size ())
+            w.Write st.Type
+            w.Write st.Dev
+            w.Write st.Qid.Type
+            w.Write st.Qid.Ver
+            w.Write st.Qid.Path
+            w.Write st.Mode
+            w.Write st.Atime
+            w.Write st.Mtime
+            w.Write st.Length
+            w.Write st.Name
+            w.Write st.Uid
+            w.Write st.Gid
+            w.Write st.Muid
+
+        // FIXME: ugly, unneeded allocations
+        member s.GetBytes (): byte [] =
+            let bytes = Array.create (int (s.Size()+2us)) 0uy
+            use bv = new System.IO.MemoryStream(bytes)
+            use w = new NinePWriter(bv)
+            s.writeTo(w)
+            bytes
+
 type IServer =
     abstract Tversion: msize: uint32 -> v: string -> Result<uint32 * string, string>
     abstract Tauth: afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
     abstract Tattach: fid: uint32 -> afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
     abstract Twalk: fid: uint32 -> newfid: uint32 -> wnames: string [] -> Result<Qid [], string>
     abstract Topen: fid: uint32 -> mode: OpenMode -> Result<Qid * uint32, string>
-    abstract Tread: fid: uint32 -> offset: uint64 -> count: uint32 -> Result<uint32 * IEnumerable<byte>, string>
+    abstract Tread: fid: uint32 -> offset: uint64 -> count: uint32 -> Result<byte [], string>
     abstract Tclunk: fid: uint32 -> Result<unit, string>
     abstract Tstat: fid: uint32 -> Result<Stat, string>
-
-type NinePReader(args) =
-    inherit System.IO.BinaryReader(args)
-
-    override r.ReadString() = (System.Text.Encoding.UTF8.GetString(r.ReadBytes(int32 (r.ReadUInt16()))))
-
-type NinePWriter(args) =
-    inherit System.IO.BinaryWriter(args)
-
-    override w.Write (s: string) =
-        let bytes = System.Text.Encoding.UTF8.GetBytes(s)
-        w.Write (uint16 bytes.Length)
-        w.Write bytes
 
 module P2000 =
     open System.IO // Stream, BinaryReader
@@ -195,6 +219,15 @@ module P2000 =
                 w.Write q.Path
                 w.Write iounit
             | Error err -> rerror w tag err
+        | MsgType.Tread ->
+            match srv.Tread (r.ReadUInt32()) (r.ReadUInt64()) (r.ReadUInt32()) with
+            | Ok data ->
+                w.Write (uint32 (4+1+2+4+data.Length))
+                w.Write (uint8 MsgType.Rread)
+                w.Write tag
+                w.Write (uint32 data.Length)
+                w.Write data
+            | Error err -> rerror w tag err
         | MsgType.Tclunk ->
             match srv.Tclunk (r.ReadUInt32()) with
             | Ok () ->
@@ -209,20 +242,7 @@ module P2000 =
                 w.Write (uint8 MsgType.Rstat)
                 w.Write tag
                 w.Write (st.Size ()+2us)
-                w.Write (st.Size ())
-                w.Write st.Type
-                w.Write st.Dev
-                w.Write st.Qid.Type
-                w.Write st.Qid.Ver
-                w.Write st.Qid.Path
-                w.Write st.Mode
-                w.Write st.Atime
-                w.Write st.Mtime
-                w.Write st.Length
-                w.Write st.Name
-                w.Write st.Uid
-                w.Write st.Gid
-                w.Write st.Muid
+                st.writeTo w
             | Error err -> rerror w tag err
         | x ->
             ignore (r.ReadBytes (int32 (len-4u-1u-2u)))

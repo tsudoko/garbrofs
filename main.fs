@@ -6,9 +6,12 @@ open System.Net.Sockets
 
 open NineP
 
+type State =
+    { Offset: uint64 }
+
 type Srv() =
     let mutable _msize: uint32 = 0u
-    let mutable qids: Map<uint32, Qid> = Map.empty
+    let mutable qids: Map<uint32, Qid * State> = Map.empty
     // TODO: move root to separate var, make paths immutable? archives don't change when they're mounted
     let mutable paths: Stat list = [{
         Type = 0us
@@ -23,6 +26,7 @@ type Srv() =
         Gid = "nobody"
         Muid = "nobody"
     }]
+    let EmptyState: State = { Offset = 0UL }
 
     interface IServer with
         member s.Tversion(msize: uint32) (v: string) =
@@ -38,15 +42,16 @@ type Srv() =
         member s.Tattach(fid: uint32) (afid: uint32) (uname: string) (aname: string) =
             printfn "got Tattach %d %d %s %s" fid afid uname aname
             // TODO: return error if fid in use
-            qids <- qids.Add(fid, paths.[0].Qid)
+            qids <- qids.Add(fid, (paths.[0].Qid, EmptyState))
             Ok paths.[0].Qid
         member s.Twalk(fid: uint32) (newfid: uint32) (wnames: string []) =
             printfn "got Twalk %A %A %A" fid newfid wnames
             // TODO: handle .. in root dir
             if wnames.Length = 0 then
                 if newfid <> fid then
-                    // TODO: return error if fid in use
-                    qids <- qids.Add(newfid, qids.[fid])
+                    // TODO: return error if newfid in use or fid not found
+                    let (qid, _) = qids.[fid]
+                    qids <- qids.Add(newfid, (qid, EmptyState))
                 Ok [||]
             else
                 Error "Twalk on random files unimplemented"
@@ -56,20 +61,27 @@ type Srv() =
                 Error "read only file system"
             else
                 try
-                    Ok (qids.[fid], 0u)
+                    let (qid, _) = qids.[fid]
+                    Ok (qid, 0u)
                 with
                 | :? System.ArgumentException ->
                     Error "fid unknown or out of range"
         member s.Tread (fid: uint32) (offset: uint64) (count: uint32) =
             printfn "got Tread %d %d %d" fid offset count
-            Error "Tread unimplemented"
+            try
+                let (qid, _) = qids.[fid]
+                Ok [||] // FIXME: all dirs/files empty for now
+            with
+            | :? System.ArgumentException ->
+                Error "fid unknown or out of range"
         member s.Tclunk(fid: uint32) =
             printfn "got Tclunk %d" fid
             qids <- qids.Remove(fid)
             Ok ()
         member s.Tstat(fid: uint32) =
             printfn "got Tstat %d" fid
-            Ok paths.[int qids.[fid].Path]
+            let (qid, _) = qids.[fid]
+            Ok paths.[int qid.Path]
             // TODO: handle missing and invalid paths (from either qids or paths)
             //Error "Tstat unimplemented"
 
