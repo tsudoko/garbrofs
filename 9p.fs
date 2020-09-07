@@ -86,6 +86,9 @@ type Stat(bytes: byte []) =
     member st.Gid = st.nthString 2
     member st.Muid = st.nthString 3
 
+    override st.ToString() =
+        sprintf "'%s' '%s' '%s' '%s' q (%016x %d %A) m %012o at %d mt %d l %d t %d d %d" st.Name st.Uid st.Gid st.Muid st.Qid.Path st.Qid.Ver st.Qid.Type st.Mode st.Atime st.Mtime st.Length st.Type st.Dev
+
     new(type_: uint16, dev: uint32, qid: Qid, mode: uint32, atime: uint32, mtime: uint32, length: uint64, name: string, uid: string, gid: string, muid: string) =
         let namelen = Encoding.UTF8.GetByteCount(name)
         let uidlen = Encoding.UTF8.GetByteCount(uid)
