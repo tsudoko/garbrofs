@@ -42,8 +42,8 @@ let handle msg =
     | Tattach (fid, afid, uname, aname) ->
         printfn "got Tattach %d %d %s %s" fid afid uname aname
         // TODO: return error if fid in use
-        qids <- qids.Add(fid, (paths.[0].Qid(), EmptyState))
-        Rattach (paths.[0].Qid())
+        qids <- qids.Add(fid, (paths.[0].Qid, EmptyState))
+        Rattach (paths.[0].Qid)
     | Twalk (fid, newfid, wnames) ->
         printfn "got Twalk %A %A %A" fid newfid wnames
         // TODO: handle .. in root dir
