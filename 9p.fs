@@ -56,33 +56,35 @@ type Qid =
       Path: uint64 }
 
 type Stat(bytes: byte []) =
-    let b = bytes
+    let stringOffset = 41
 
-    let namestart = 41
-    let namelen = int (LittleEndian.ru16 (ReadOnlySpan<byte>(b, namestart, 2)))
-    let uidstart = int (namestart+2+namelen)
-    let uidlen = int (LittleEndian.ru16 (ReadOnlySpan<byte>(b, uidstart, 2)))
-    let gidstart = int (uidstart+2+uidlen)
-    let gidlen = int (LittleEndian.ru16 (ReadOnlySpan<byte>(b, gidstart, 2)))
-    let muidstart = int (gidstart+2+gidlen)
-    let muidlen = int (LittleEndian.ru16 (ReadOnlySpan<byte>(b, muidstart, 2)))
+    member inline st.AsSpan(from, len) = ReadOnlySpan<byte>(st.Bytes, from, len)
 
-    member st.Bytes = b
-    member st.Size = LittleEndian.ru16 (ReadOnlySpan<byte>(b, 0, 2))
-    member st.Type = LittleEndian.ru16 (ReadOnlySpan<byte>(b, 2, 2))
-    member st.Dev = LittleEndian.ru32 (ReadOnlySpan<byte>(b, 4, 4))
+    member private st.nthString n =
+        st.nthString_ n stringOffset
+    member private st.nthString_ n offset =
+        match n with
+        | 0 ->
+            Encoding.UTF8.GetString(st.AsSpan(offset+2, int (LittleEndian.ru16(st.AsSpan(offset, 2)))))
+        | x ->
+            st.nthString_ (n-1) (offset+2+(int (LittleEndian.ru16(st.AsSpan(offset, 2)))))
+
+    member st.Bytes = bytes
+    member st.Size = LittleEndian.ru16(st.AsSpan(0, 2))
+    member st.Type = LittleEndian.ru16(st.AsSpan(2, 2))
+    member st.Dev = LittleEndian.ru32(st.AsSpan(4, 4))
     member st.Qid: Qid =
-        { Type = b.[8]
-          Ver = LittleEndian.ru32 (ReadOnlySpan<byte>(b, 9, 4))
-          Path = LittleEndian.ru64 (ReadOnlySpan<byte>(b, 13, 8)) }
-    member st.Mode = LittleEndian.ru32 (ReadOnlySpan<byte>(b, 21, 4))
-    member st.Atime = LittleEndian.ru32 (ReadOnlySpan<byte>(b, 25, 4))
-    member st.Mtime = LittleEndian.ru32 (ReadOnlySpan<byte>(b, 29, 4))
-    member st.Length = LittleEndian.ru64 (ReadOnlySpan<byte>(b, 33, 8))
-    member st.Name = Encoding.UTF8.GetString(ReadOnlySpan<byte>(b, namestart+2, namelen))
-    member st.Uid = Encoding.UTF8.GetString(ReadOnlySpan<byte>(b, uidstart+2, uidlen))
-    member st.Gid = Encoding.UTF8.GetString(ReadOnlySpan<byte>(b, gidstart+2, gidlen))
-    member st.Muid = Encoding.UTF8.GetString(ReadOnlySpan<byte>(b, muidstart+2, muidlen))
+        { Type = st.Bytes.[8]
+          Ver = LittleEndian.ru32(st.AsSpan(9, 4))
+          Path = LittleEndian.ru64(st.AsSpan(13, 8)) }
+    member st.Mode = LittleEndian.ru32(st.AsSpan(21, 4))
+    member st.Atime = LittleEndian.ru32(st.AsSpan(25, 4))
+    member st.Mtime = LittleEndian.ru32(st.AsSpan(29, 4))
+    member st.Length = LittleEndian.ru64(st.AsSpan(33, 8))
+    member st.Name = st.nthString 0
+    member st.Uid = st.nthString 1
+    member st.Gid = st.nthString 2
+    member st.Muid = st.nthString 3
 
     new(type_: uint16, dev: uint32, qid: Qid, mode: uint32, atime: uint32, mtime: uint32, length: uint64, name: string, uid: string, gid: string, muid: string) =
         let namelen = Encoding.UTF8.GetByteCount(name)
