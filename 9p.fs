@@ -100,7 +100,7 @@ type Stat(bytes: byte []) =
         let gidstart = uidstart+2+uidlen
         let muidstart = gidstart+2+gidlen
         let b = Array.create size 0uy
-        LittleEndian.wu16(uint16 size, b.AsSpan(0, 2))
+        LittleEndian.wu16(uint16 (size-2), b.AsSpan(0, 2))
         LittleEndian.wu16(type_, b.AsSpan(2, 2))
         LittleEndian.wu32(dev, b.AsSpan(4, 4))
         b.[8] <- qid.Type
