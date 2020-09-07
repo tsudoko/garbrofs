@@ -115,15 +115,31 @@ type Stat(bytes: byte []) =
         Encoding.UTF8.GetBytes(muid.AsSpan(), b.AsSpan(muidstart+2, muidlen)) |> ignore
         Stat b
 
-type IServer =
-    abstract Tversion: msize: uint32 -> v: string -> Result<uint32 * string, string>
-    abstract Tauth: afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
-    abstract Tattach: fid: uint32 -> afid: uint32 -> uname: string -> aname: string -> Result<Qid, string>
-    abstract Twalk: fid: uint32 -> newfid: uint32 -> wnames: string [] -> Result<Qid [], string>
-    abstract Topen: fid: uint32 -> mode: OpenMode -> Result<Qid * uint32, string>
-    abstract Tread: fid: uint32 -> offset: uint64 -> count: uint32 -> Result<byte [], string>
-    abstract Tclunk: fid: uint32 -> Result<unit, string>
-    abstract Tstat: fid: uint32 -> Result<Stat, string>
+type Tmsg =
+    | Tversion of msize: uint32 * version: string
+    | Tauth of afid: uint32 * uname: string * aname: string
+    | Tattach of fid: uint32 * afid: uint32 * uname: string * aname: string
+    | Twalk of fid: uint32 * newfid: uint32 * wnames: string []
+    | Topen of fid: uint32 * mode: OpenMode
+    | Tread of fid: uint32 * offset: uint64 * count: uint32
+    | Tclunk of fid: uint32
+    | Tstat of fid: uint32
+    | Tunknown of mtype: MsgType
+
+type Rmsg =
+    | Rversion of msize: uint32 * version: string
+    | Rauth of aqid: Qid
+    | Rattach of qid: Qid
+    | Rerror of ename: string
+    | Rwalk of nwqids: Qid []
+    | Ropen of qid: Qid * iounit: uint32
+    | Rread of data: byte []
+    | Rclunk
+    | Rstat of stat: Stat
+
+type Msg =
+    | Tmsg
+    | Rmsg
 
 type NinePReader(args: System.IO.Stream) =
     inherit System.IO.BinaryReader(args)
@@ -151,118 +167,97 @@ module P2000 =
     [<Literal>]
     let Ver = "9P2000"
 
-    let rerror (w: NinePWriter) (tag: uint16) (err: string) =
-        w.Write (uint32 (4+1+2+2+(Encoding.UTF8.GetByteCount err)))
-        w.Write (uint8 MsgType.Rerror)
-        w.Write tag
-        w.Write err
-
-    let rec handle_ (r: NinePReader) (w: NinePWriter) (srv: IServer) =
+    let rec serve_ (r: NinePReader) (w: NinePWriter) (handle: Tmsg -> Rmsg) =
         let len = r.ReadUInt32()
         let mtype = Microsoft.FSharp.Core.LanguagePrimitives.EnumOfValue<uint8, MsgType>(r.ReadByte())
         let tag = r.ReadUInt16()
         printfn "mtype %d %A tag %d" (uint8 mtype) mtype tag
 
-        match mtype with
-        // TODO: look for a way to reduce match clauses here? the rerror case is always the same
+        let msg: Tmsg =
+            match mtype with
+            | MsgType.Tversion -> Tversion(r.ReadUInt32(), r.ReadString())
+            | MsgType.Tauth -> Tauth(r.ReadUInt32(), r.ReadString(), r.ReadString())
+            | MsgType.Tattach -> Tattach(r.ReadUInt32(), r.ReadUInt32(), r.ReadString(), r.ReadString())
+            // TODO: check if wnames <= MaxWelem
+            | MsgType.Twalk -> Twalk(r.ReadUInt32(), r.ReadUInt32(), Array.init (int (r.ReadUInt16())) (fun _ -> r.ReadString()))
+            | MsgType.Topen -> Topen(r.ReadUInt32(), LanguagePrimitives.EnumOfValue (r.ReadByte()))
+            | MsgType.Tread -> Tread(r.ReadUInt32(), r.ReadUInt64(), r.ReadUInt32())
+            | MsgType.Tclunk -> Tclunk(r.ReadUInt32())
+            | MsgType.Tstat -> Tstat(r.ReadUInt32())
+            | x ->
+                ignore <| r.ReadBytes (int32 <| len-4u-1u-2u)
+                Tunknown x
+
         // TODO: calulate sizes automatially, maybe find a way to write complex types directly
         // TODO: check if msg size doesn't exceed srv.msize on every send
-        | MsgType.Tversion ->
-            match srv.Tversion (r.ReadUInt32()) (r.ReadString()) with
-            | Ok (msize, v) ->
-                w.Write (uint32 (4+1+2+4+2+Encoding.UTF8.GetByteCount(v)))
-                w.Write (uint8 MsgType.Rversion)
-                w.Write tag
-                w.Write msize
-                w.Write v
-            | Error err -> rerror w tag err
-        | MsgType.Tauth ->
-            match srv.Tauth (r.ReadUInt32()) (r.ReadString()) (r.ReadString()) with
-            | Ok q ->
-                w.Write (uint32 (4+1+2+13))
-                w.Write (uint8 MsgType.Rauth)
-                w.Write tag
+        match handle msg with
+        | Rversion (msize, v) ->
+            w.Write (uint32 (4+1+2+4+2+Encoding.UTF8.GetByteCount(v)))
+            w.Write (uint8 MsgType.Rversion)
+            w.Write tag
+            w.Write msize
+            w.Write v
+        | Rauth aqid ->
+            w.Write (uint32 (4+1+2+13))
+            w.Write (uint8 MsgType.Rauth)
+            w.Write tag
+            w.Write aqid.Type
+            w.Write aqid.Ver
+            w.Write aqid.Path
+        | Rattach qid ->
+            w.Write (uint32 (4+1+2+13))
+            w.Write (uint8 MsgType.Rattach)
+            w.Write tag
+            w.Write qid.Type
+            w.Write qid.Ver
+            w.Write qid.Path
+        | Rerror ename ->
+            w.Write (uint32 (4+1+2+2+(Encoding.UTF8.GetByteCount ename)))
+            w.Write (uint8 MsgType.Rerror)
+            w.Write tag
+            w.Write ename
+        | Rwalk qids ->
+            // TODO: check if qids.Length <= MaxWelem
+            w.Write (uint32 (4+1+2+2+13*qids.Length))
+            w.Write (uint8 MsgType.Rwalk)
+            w.Write tag
+            w.Write (uint16 qids.Length)
+            for q in qids do
                 w.Write q.Type
                 w.Write q.Ver
                 w.Write q.Path
-            | Error err -> rerror w tag err
-        | MsgType.Tattach ->
-            match srv.Tattach (r.ReadUInt32()) (r.ReadUInt32()) (r.ReadString()) (r.ReadString()) with
-            | Ok q ->
-                w.Write (uint32 (4+1+2+13))
-                w.Write (uint8 MsgType.Rattach)
-                w.Write tag
-                w.Write q.Type
-                w.Write q.Ver
-                w.Write q.Path
-            | Error err -> rerror w tag err
-        | MsgType.Twalk ->
-            let fid = r.ReadUInt32()
-            let newfid = r.ReadUInt32()
-            let nwname = r.ReadUInt16()
-            // TODO: check if wnames <= MaxWelem
-            let mutable wnames = Array.create (int nwname) ""
-            for i = 1 to wnames.Length do
-                Array.set wnames (i-1) (r.ReadString())
-            match srv.Twalk fid newfid wnames with
-            // TODO: check if qs.Length <= MaxWelem
-            | Ok qs ->
-                w.Write (uint32 (4+1+2+2+13*qs.Length))
-                w.Write (uint8 MsgType.Rwalk)
-                w.Write tag
-                w.Write (uint16 qs.Length)
-                for q in qs do
-                    w.Write q.Type
-                    w.Write q.Ver
-                    w.Write q.Path
-            | Error err -> rerror w tag err
-        | MsgType.Topen ->
-            match srv.Topen (r.ReadUInt32()) (LanguagePrimitives.EnumOfValue<uint8, OpenMode>(r.ReadByte())) with
-            | Ok (q, iounit) ->
-                w.Write (uint32 (4+1+2+13+4))
-                w.Write (uint8 MsgType.Ropen)
-                w.Write tag
-                w.Write q.Type
-                w.Write q.Ver
-                w.Write q.Path
-                w.Write iounit
-            | Error err -> rerror w tag err
-        | MsgType.Tread ->
-            match srv.Tread (r.ReadUInt32()) (r.ReadUInt64()) (r.ReadUInt32()) with
-            | Ok data ->
-                w.Write (uint32 (4+1+2+4+data.Length))
-                w.Write (uint8 MsgType.Rread)
-                w.Write tag
-                w.Write (uint32 data.Length)
-                w.Write data
-            | Error err -> rerror w tag err
-        | MsgType.Tclunk ->
-            match srv.Tclunk (r.ReadUInt32()) with
-            | Ok () ->
-                w.Write (uint32 (4+1+2))
-                w.Write (uint8 MsgType.Rclunk)
-                w.Write tag
-            | Error err -> rerror w tag err
-        | MsgType.Tstat ->
-            match srv.Tstat (r.ReadUInt32()) with
-            | Ok st ->
-                w.Write (4u+1u+2u+2u+(uint32 (st.Bytes.Length)))
-                w.Write (uint8 MsgType.Rstat)
-                w.Write tag
-                w.Write (uint16 st.Bytes.Length)
-                w.Write (st.Bytes)
-            | Error err -> rerror w tag err
-        | x ->
-            ignore (r.ReadBytes (int32 (len-4u-1u-2u)))
-            rerror w tag (sprintf "unimplemented message type: %d" (uint8 x))
+        | Ropen (qid, iounit) ->
+            w.Write (uint32 (4+1+2+13+4))
+            w.Write (uint8 MsgType.Ropen)
+            w.Write tag
+            w.Write qid.Type
+            w.Write qid.Ver
+            w.Write qid.Path
+            w.Write iounit
+        | Rread data ->
+            w.Write (uint32 (4+1+2+4+data.Length))
+            w.Write (uint8 MsgType.Rread)
+            w.Write tag
+            w.Write (uint32 data.Length)
+            w.Write data
+        | Rclunk ->
+            w.Write (uint32 (4+1+2))
+            w.Write (uint8 MsgType.Rclunk)
+            w.Write tag
+        | Rstat stat ->
+            w.Write (4u+1u+2u+2u+(uint32 (stat.Bytes.Length)))
+            w.Write (uint8 MsgType.Rstat)
+            w.Write tag
+            w.Write (uint16 stat.Bytes.Length)
+            w.Write (stat.Bytes)
 
-        handle_ r w srv
+        serve_ r w handle
 
-    let handle (s: Stream) (srv: IServer) =
+    let serve (s: Stream) handle =
         use r = new NinePReader(s)
         use w = new NinePWriter(s)
         try
-            handle_ r w srv
+            serve_ r w handle
         with
         | :? System.IO.EndOfStreamException -> printfn "eof"
 
