@@ -13,19 +13,19 @@ type Srv() =
     let mutable _msize: uint32 = 0u
     let mutable qids: Map<uint32, Qid * State> = Map.empty
     // TODO: move root to separate var, make paths immutable? archives don't change when they're mounted
-    let mutable paths: Stat list = [{
-        Type = 0us
-        Dev = 0u
-        Qid = { Type = (uint8 FileType.Dir); Ver = 0u; Path = 0UL }
-        Mode = 0o555u ||| ((uint32 FileType.Dir) <<< 24)
-        Atime = 0u
-        Mtime = 0u
-        Length = 0UL
-        Name = "/"
-        Uid = "nobody"
-        Gid = "nobody"
-        Muid = "nobody"
-    }]
+    let mutable paths: Stat list = [Stat(
+        type_ = 0us,
+        dev = 0u,
+        qid = { Type = (uint8 FileType.Dir); Ver = 0u; Path = 0UL },
+        mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
+        atime = 0u,
+        mtime = 0u,
+        length = 0UL,
+        name = "/",
+        uid = "nobody",
+        gid = "nobody",
+        muid = "nobody"
+    )]
     let EmptyState: State = { Offset = 0UL }
 
     interface IServer with
@@ -42,8 +42,8 @@ type Srv() =
         member s.Tattach(fid: uint32) (afid: uint32) (uname: string) (aname: string) =
             printfn "got Tattach %d %d %s %s" fid afid uname aname
             // TODO: return error if fid in use
-            qids <- qids.Add(fid, (paths.[0].Qid, EmptyState))
-            Ok paths.[0].Qid
+            qids <- qids.Add(fid, (paths.[0].Qid(), EmptyState))
+            Ok (paths.[0].Qid())
         member s.Twalk(fid: uint32) (newfid: uint32) (wnames: string []) =
             printfn "got Twalk %A %A %A" fid newfid wnames
             // TODO: handle .. in root dir
