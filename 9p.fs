@@ -265,4 +265,5 @@ module P2000 =
             serve_ r w handle
         with
         | :? System.IO.EndOfStreamException -> printfn "eof"
+        | :? System.IO.IOException as e -> printfn "io error: %s" e.Message
 
