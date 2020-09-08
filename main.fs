@@ -58,17 +58,16 @@ let handle msg =
         if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
             Rerror "read only file system"
         else
-            try
-                let (qid, _) = qids.[fid]
+            match qids.TryFind(fid) with
+            | Some (qid, _) ->
                 qids <- qids.Add(fid, (qid, Some (upcast (new System.IO.MemoryStream("awoo"B)))))
                 Ropen (qid, 0u)
-            with
-            | :? System.ArgumentException ->
+            | None ->
                 Rerror "fid unknown or out of range"
     | Tread (fid, offset, count) ->
         printfn "got Tread %d %d %d" fid offset count
-        try
-            let (qid, ms) = qids.[fid]
+        match qids.TryFind(fid) with
+        | Some (qid, ms) ->
             match qid.Type.HasFlag(FileType.Dir) with
             | true -> Rread [||] // empty directory
             | false ->
@@ -82,8 +81,7 @@ let handle msg =
                     Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
                 | None ->
                     Rerror "file not open"
-        with
-        | :? System.ArgumentException ->
+        | None ->
             Rerror "fid unknown or out of range"
     | Tclunk fid ->
         printfn "got Tclunk %d" fid
