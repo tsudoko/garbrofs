@@ -14,6 +14,7 @@ type OpenMode =
     | Trunc  = 0x10uy
     | Rclose = 0x40uy
 
+[<System.Flags>]
 type FileType =
     |  Dir    = 0b10000000uy
     |  Append = 0b01000000uy
@@ -51,7 +52,7 @@ type MsgType =
     | Rwstat   = 127uy
 
 type Qid =
-    { Type: uint8
+    { Type: FileType
       Ver: uint32
       Path: uint64 }
 
@@ -74,7 +75,7 @@ type Stat(bytes: byte []) =
     member st.Type = LittleEndian.ru16(st.AsSpan(2, 2))
     member st.Dev = LittleEndian.ru32(st.AsSpan(4, 4))
     member st.Qid: Qid =
-        { Type = st.Bytes.[8]
+        { Type = LanguagePrimitives.EnumOfValue<uint8, FileType> st.Bytes.[8]
           Ver = LittleEndian.ru32(st.AsSpan(9, 4))
           Path = LittleEndian.ru64(st.AsSpan(13, 8)) }
     member st.Mode = LittleEndian.ru32(st.AsSpan(21, 4))
@@ -103,7 +104,7 @@ type Stat(bytes: byte []) =
         LittleEndian.wu16(uint16 (size-2), b.AsSpan(0, 2))
         LittleEndian.wu16(type_, b.AsSpan(2, 2))
         LittleEndian.wu32(dev, b.AsSpan(4, 4))
-        b.[8] <- qid.Type
+        b.[8] <- uint8 qid.Type
         LittleEndian.wu32(qid.Ver, b.AsSpan(9, 4))
         LittleEndian.wu64(qid.Path, b.AsSpan(13, 8))
         LittleEndian.wu32(mode, b.AsSpan(21, 4))
@@ -206,14 +207,14 @@ module P2000 =
             w.Write (uint32 (4+1+2+13))
             w.Write (uint8 MsgType.Rauth)
             w.Write tag
-            w.Write aqid.Type
+            w.Write (uint8 aqid.Type)
             w.Write aqid.Ver
             w.Write aqid.Path
         | Rattach qid ->
             w.Write (uint32 (4+1+2+13))
             w.Write (uint8 MsgType.Rattach)
             w.Write tag
-            w.Write qid.Type
+            w.Write (uint8 qid.Type)
             w.Write qid.Ver
             w.Write qid.Path
         | Rerror ename ->
@@ -228,14 +229,14 @@ module P2000 =
             w.Write tag
             w.Write (uint16 qids.Length)
             for q in qids do
-                w.Write q.Type
+                w.Write (uint8 q.Type)
                 w.Write q.Ver
                 w.Write q.Path
         | Ropen (qid, iounit) ->
             w.Write (uint32 (4+1+2+13+4))
             w.Write (uint8 MsgType.Ropen)
             w.Write tag
-            w.Write qid.Type
+            w.Write (uint8 qid.Type)
             w.Write qid.Ver
             w.Write qid.Path
             w.Write iounit

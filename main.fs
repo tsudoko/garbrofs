@@ -15,7 +15,7 @@ let mutable qids: Map<uint32, Qid * State> = Map.empty
 let mutable paths: Stat list = [Stat(
     type_ = 0us,
     dev = 0u,
-    qid = { Type = (uint8 FileType.Dir); Ver = 0u; Path = 0UL },
+    qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
     mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
     atime = 0u,
     mtime = 0u,
