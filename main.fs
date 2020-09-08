@@ -59,19 +59,23 @@ let handle msg =
             Rerror "read only file system"
         else
             match qids.TryFind(fid) with
+            | None ->
+                Rerror "fid unknown or out of range"
             | Some (qid, _) ->
                 qids <- qids.Add(fid, (qid, Some (upcast (new System.IO.MemoryStream("awoo"B)))))
                 Ropen (qid, 0u)
-            | None ->
-                Rerror "fid unknown or out of range"
     | Tread (fid, offset, count) ->
         printfn "got Tread %d %d %d" fid offset count
         match qids.TryFind(fid) with
+        | None ->
+            Rerror "fid unknown or out of range"
         | Some (qid, ms) ->
             match qid.Type.HasFlag(FileType.Dir) with
             | true -> Rread [||] // empty directory
             | false ->
                 match ms with
+                | None ->
+                    Rerror "file not open"
                 | Some s ->
                     // XXX: return error on overflow
                     if s.Position <> Checked.int64 offset then
@@ -79,10 +83,6 @@ let handle msg =
                     let buf = Array.zeroCreate (int count)
                     let nread = s.Read(buf, 0, (int count))
                     Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
-                | None ->
-                    Rerror "file not open"
-        | None ->
-            Rerror "fid unknown or out of range"
     | Tclunk fid ->
         printfn "got Tclunk %d" fid
         let (_, ms) = qids.[fid]
