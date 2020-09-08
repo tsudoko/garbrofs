@@ -6,8 +6,7 @@ open System.Net.Sockets
 
 open NineP
 
-type State =
-    { Offset: uint64 }
+type State = System.IO.Stream option
 
 let mutable _msize: uint32 = 0u
 let mutable qids: Map<uint32, Qid * State> = Map.empty
@@ -25,7 +24,6 @@ let mutable paths: Stat list = [Stat(
     gid = "nobody",
     muid = "nobody"
 )]
-let EmptyState: State = { Offset = 0UL }
 
 let handle msg =
     match msg with
@@ -42,16 +40,16 @@ let handle msg =
     | Tattach (fid, afid, uname, aname) ->
         printfn "got Tattach %d %d %s %s" fid afid uname aname
         // TODO: return error if fid in use
-        qids <- qids.Add(fid, (paths.[0].Qid, EmptyState))
+        qids <- qids.Add(fid, (paths.[0].Qid, None))
         Rattach (paths.[0].Qid)
     | Twalk (fid, newfid, wnames) ->
         printfn "got Twalk %A %A %A" fid newfid wnames
         // TODO: handle .. in root dir
         if wnames.Length = 0 then
             if newfid <> fid then
-                // TODO: return error if newfid in use or fid not found
+                // TODO: return error if newfid in use (unless newfid = fid) or fid not found or fid open
                 let (qid, _) = qids.[fid]
-                qids <- qids.Add(newfid, (qid, EmptyState))
+                qids <- qids.Add(newfid, (qid, None))
             Rwalk [||]
         else
             Rerror "Twalk on random files unimplemented"
@@ -62,6 +60,7 @@ let handle msg =
         else
             try
                 let (qid, _) = qids.[fid]
+                qids <- qids.Add(fid, (qid, Some (upcast (new System.IO.MemoryStream("awoo"B)))))
                 Ropen (qid, 0u)
             with
             | :? System.ArgumentException ->
@@ -69,13 +68,27 @@ let handle msg =
     | Tread (fid, offset, count) ->
         printfn "got Tread %d %d %d" fid offset count
         try
-            let (qid, _) = qids.[fid]
-            Rread [||] // FIXME: all dirs/files empty for now
+            let (qid, ms) = qids.[fid]
+            match qid.Type.HasFlag(FileType.Dir) with
+            | true -> Rread [||] // empty directory
+            | false ->
+                match ms with
+                | Some s ->
+                    // XXX: return error on overflow
+                    if s.Position <> Checked.int64 offset then
+                        s.Position <- Checked.int64 offset
+                    let buf = Array.zeroCreate (int count)
+                    let nread = s.Read(buf, 0, (int count))
+                    Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
+                | None ->
+                    Rerror "file not open"
         with
         | :? System.ArgumentException ->
             Rerror "fid unknown or out of range"
     | Tclunk fid ->
         printfn "got Tclunk %d" fid
+        let (_, ms) = qids.[fid]
+        ms |> Option.map (fun s -> s.Dispose())
         qids <- qids.Remove(fid)
         Rclunk
     | Tstat fid ->
