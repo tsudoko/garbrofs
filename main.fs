@@ -114,11 +114,21 @@ let handle session tag msg =
         session, Rerror <| sprintf "%A unimplemented" x
 
 let rec serve state =
-    // TODO: handle connection errors, remember to dispose
-    let tag, tmsg = P2000.readMsg state.Reader state.Session.Msize
-    let nsession, rmsg = handle state.Session tag tmsg
-    P2000.writeMsg state.Writer tag rmsg
-    serve { state with Session = nsession }
+    let r =
+        P2000.tryReadMsg state.Reader state.Session.Msize
+        |> Result.bind (fun (tag, tmsg) ->
+            let nsession, rmsg = handle state.Session tag tmsg
+            P2000.tryWriteMsg state.Writer tag rmsg
+            |> Result.map (fun _ -> nsession)
+        )
+
+    match r with
+    | Ok nsession ->
+        serve { state with Session = nsession }
+    | Error e ->
+        eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
+        state.Reader.Dispose()
+        state.Writer.Dispose()
 
 let rec listen (listener: TcpListener) =
     let client = listener.AcceptTcpClient()

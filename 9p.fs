@@ -270,13 +270,14 @@ module P2000 =
             w.Write (uint16 stat.Bytes.Length)
             w.Write (stat.Bytes)
 
-    // unused, left here until we implement error handling in rewritten serve
-    let private serve (s: Stream) handle =
-        use r = new NinePReader(s)
-        use w = new NinePWriter(s)
+    let tryReadMsg r msize =
         try
-            (* serve_ r w handle *) ()
+            Ok (readMsg r msize)
         with
-        | :? System.IO.EndOfStreamException -> printfn "eof"
-        | :? System.IO.IOException as e -> printfn "io error: %s" e.Message
+        | :? System.IO.IOException as e -> Error e
 
+    let tryWriteMsg w tag msg =
+        try
+            Ok (writeMsg w tag msg)
+        with
+        | :? System.IO.IOException as e -> Error e
