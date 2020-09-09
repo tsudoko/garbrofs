@@ -2,8 +2,7 @@ namespace NineP
 
 open System
 open System.Text
-
-open Util
+open System.Buffers.Binary
 
 [<System.Flags>]
 type OpenMode =
@@ -66,22 +65,22 @@ type Stat(bytes: byte []) =
     member private st.nthString_ n offset =
         match n with
         | 0 ->
-            Encoding.UTF8.GetString(st.AsSpan(offset+2, int (LittleEndian.ru16(st.AsSpan(offset, 2)))))
+            Encoding.UTF8.GetString(st.AsSpan(offset+2, int (BinaryPrimitives.ReadUInt16LittleEndian(st.AsSpan(offset, 2)))))
         | x ->
-            st.nthString_ (n-1) (offset+2+(int (LittleEndian.ru16(st.AsSpan(offset, 2)))))
+            st.nthString_ (n-1) (offset+2+(int (BinaryPrimitives.ReadUInt16LittleEndian(st.AsSpan(offset, 2)))))
 
     member st.Bytes = bytes
-    member st.Size = LittleEndian.ru16(st.AsSpan(0, 2))
-    member st.Type = LittleEndian.ru16(st.AsSpan(2, 2))
-    member st.Dev = LittleEndian.ru32(st.AsSpan(4, 4))
+    member st.Size = BinaryPrimitives.ReadUInt16LittleEndian(st.AsSpan(0, 2))
+    member st.Type = BinaryPrimitives.ReadUInt16LittleEndian(st.AsSpan(2, 2))
+    member st.Dev = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(4, 4))
     member st.Qid: Qid =
         { Type = LanguagePrimitives.EnumOfValue<uint8, FileType> st.Bytes.[8]
-          Ver = LittleEndian.ru32(st.AsSpan(9, 4))
-          Path = LittleEndian.ru64(st.AsSpan(13, 8)) }
-    member st.Mode = LittleEndian.ru32(st.AsSpan(21, 4))
-    member st.Atime = LittleEndian.ru32(st.AsSpan(25, 4))
-    member st.Mtime = LittleEndian.ru32(st.AsSpan(29, 4))
-    member st.Length = LittleEndian.ru64(st.AsSpan(33, 8))
+          Ver = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(9, 4))
+          Path = BinaryPrimitives.ReadUInt64LittleEndian(st.AsSpan(13, 8)) }
+    member st.Mode = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(21, 4))
+    member st.Atime = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(25, 4))
+    member st.Mtime = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(29, 4))
+    member st.Length = BinaryPrimitives.ReadUInt64LittleEndian(st.AsSpan(33, 8))
     member st.Name = st.nthString 0
     member st.Uid = st.nthString 1
     member st.Gid = st.nthString 2
@@ -101,23 +100,23 @@ type Stat(bytes: byte []) =
         let gidstart = uidstart+2+uidlen
         let muidstart = gidstart+2+gidlen
         let b = Array.create size 0uy
-        LittleEndian.wu16(uint16 (size-2), b.AsSpan(0, 2))
-        LittleEndian.wu16(type_, b.AsSpan(2, 2))
-        LittleEndian.wu32(dev, b.AsSpan(4, 4))
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(0, 2), uint16 (size-2))
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(2, 2), type_)
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(4, 4), dev)
         b.[8] <- uint8 qid.Type
-        LittleEndian.wu32(qid.Ver, b.AsSpan(9, 4))
-        LittleEndian.wu64(qid.Path, b.AsSpan(13, 8))
-        LittleEndian.wu32(mode, b.AsSpan(21, 4))
-        LittleEndian.wu32(atime, b.AsSpan(25, 4))
-        LittleEndian.wu32(mtime, b.AsSpan(29, 4))
-        LittleEndian.wu64(length, b.AsSpan(33, 8))
-        LittleEndian.wu16(uint16 namelen, b.AsSpan(41, 2))
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(9, 4), qid.Ver)
+        BinaryPrimitives.WriteUInt64LittleEndian(b.AsSpan(13, 8), qid.Path)
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(21, 4), mode)
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(25, 4), atime)
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(29, 4), mtime)
+        BinaryPrimitives.WriteUInt64LittleEndian(b.AsSpan(33, 8), length)
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(41, 2), uint16 namelen)
         Encoding.UTF8.GetBytes(name.AsSpan(), b.AsSpan(43, namelen)) |> ignore
-        LittleEndian.wu16(uint16 uidlen, b.AsSpan(uidstart, 2))
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(uidstart, 2), uint16 uidlen)
         Encoding.UTF8.GetBytes(uid.AsSpan(), b.AsSpan(uidstart+2, uidlen)) |> ignore
-        LittleEndian.wu16(uint16 gidlen, b.AsSpan(gidstart, 2))
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(gidstart, 2), uint16 gidlen)
         Encoding.UTF8.GetBytes(gid.AsSpan(), b.AsSpan(gidstart+2, gidlen)) |> ignore
-        LittleEndian.wu16(uint16 muidlen, b.AsSpan(muidstart, 2))
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(muidstart, 2), uint16 muidlen)
         Encoding.UTF8.GetBytes(muid.AsSpan(), b.AsSpan(muidstart+2, muidlen)) |> ignore
         Stat b
 
