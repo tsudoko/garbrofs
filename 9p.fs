@@ -74,7 +74,7 @@ type Stat(bytes: byte []) =
     member st.Type = BinaryPrimitives.ReadUInt16LittleEndian(st.AsSpan(2, 2))
     member st.Dev = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(4, 4))
     member st.Qid: Qid =
-        { Type = LanguagePrimitives.EnumOfValue<uint8, FileType> st.Bytes.[8]
+        { Type = LanguagePrimitives.EnumOfValue st.Bytes.[8]
           Ver = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(9, 4))
           Path = BinaryPrimitives.ReadUInt64LittleEndian(st.AsSpan(13, 8)) }
     member st.Mode = BinaryPrimitives.ReadUInt32LittleEndian(st.AsSpan(21, 4))
@@ -174,7 +174,7 @@ module P2000 =
 
     let rec serve_ (r: NinePReader) (w: NinePWriter) (handle: Tmsg -> Rmsg) =
         let len = r.ReadUInt32()
-        let mtype = Microsoft.FSharp.Core.LanguagePrimitives.EnumOfValue<uint8, MsgType>(r.ReadByte())
+        let mtype = LanguagePrimitives.EnumOfValue (r.ReadByte())
         let tag = r.ReadUInt16()
         printfn "mtype %d %A tag %d" (uint8 mtype) mtype tag
 
