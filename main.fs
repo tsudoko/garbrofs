@@ -50,7 +50,7 @@ let handle session tag msg =
             { EmptySession with Msize = msize }, Rversion (msize, "9P2000")
         else
             EmptySession, Rversion (msize, "unknown")
-    | Tauth (_, _, _) ->
+    | Tauth _ ->
         session, Rerror "no authentication required"
     | Tattach (fid, afid, uname, aname) ->
         printfn "got Tattach %d %d %s %s" fid afid uname aname
