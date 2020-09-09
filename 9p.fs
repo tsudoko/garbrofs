@@ -184,7 +184,7 @@ module P2000 =
     [<Literal>]
     let Ver = "9P2000"
 
-    let rec serve_ (r: NinePReader) (w: NinePWriter) (handle: Tmsg -> Rmsg) =
+    let readMsg (r: NinePReader) (msize: uint32) =
         let len = r.ReadUInt32()
         let mtype = LanguagePrimitives.EnumOfValue (r.ReadByte())
         let tag = r.ReadUInt16()
@@ -204,10 +204,12 @@ module P2000 =
             | x ->
                 ignore <| r.ReadBytes (int32 <| len-4u-1u-2u)
                 Tunknown x
+        tag, msg
 
+    let writeMsg (w: NinePWriter) (tag: uint16) =
         // TODO: calulate sizes automatially, maybe find a way to write complex types directly
         // TODO: check if msg size doesn't exceed srv.msize on every send
-        match handle msg with
+        function
         | Rversion (msize, v) ->
             w.Write (uint32 (4+1+2+4+2+Encoding.UTF8.GetByteCount(v)))
             w.Write (uint8 MsgType.Rversion)
@@ -268,13 +270,12 @@ module P2000 =
             w.Write (uint16 stat.Bytes.Length)
             w.Write (stat.Bytes)
 
-        serve_ r w handle
-
-    let serve (s: Stream) handle =
+    // unused, left here until we implement error handling in rewritten serve
+    let private serve (s: Stream) handle =
         use r = new NinePReader(s)
         use w = new NinePWriter(s)
         try
-            serve_ r w handle
+            (* serve_ r w handle *) ()
         with
         | :? System.IO.EndOfStreamException -> printfn "eof"
         | :? System.IO.IOException as e -> printfn "io error: %s" e.Message
