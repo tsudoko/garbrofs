@@ -146,6 +146,18 @@ type Msg =
     | Tmsg
     | Rmsg
 
+// NinePReader has a big flaw: ReadString allocates a byte buffer only to throw
+// it away after converting the bytes to a string. We generally want the same
+// behavior as BinaryReader, but with a fixed unsigned 16-bit length prefix
+// instead of the packed 32-bit one BinaryReader uses for strings by default.
+// Unfortunately there's no way to just override the length reading function as
+// it's hardcoded to Read7BitEncodedInt in System.IO.BinaryReader.ReadString.
+// We could copy ReadString from the .NET Core BinaryReader and just swap the
+// hardcoded call with ReadUInt16, but it seems like more pain than it's worth
+// considering it depends on internal types and private fields we'd have to
+// redefine and allocate too.
+//
+// Reference: https://github.com/dotnet/runtime/blob/aa5fdab9654d74bc6274c0b5d820272c8e859621/src/libraries/System.Private.CoreLib/src/System/IO/BinaryReader.cs#L276
 type NinePReader(args: System.IO.Stream) =
     inherit System.IO.BinaryReader(args)
 
