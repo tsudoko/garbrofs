@@ -1,6 +1,7 @@
 module Main
 open System
 open System.Collections.Generic
+open System.Collections.Immutable
 open System.Net
 open System.Net.Sockets
 
@@ -22,6 +23,33 @@ let mutable paths: Stat list = [Stat(
     gid = "nobody",
     muid = "nobody"
 )]
+
+type Node =
+    | File      of Stat: (Node -> Stat) * Open: (Node -> OpenMode -> System.IO.Stream)
+    | Directory of Stat: (Node -> Stat) * Contents: (Node -> Node seq)
+
+type PathMapMsg =
+    | GetPath of chan: AsyncReplyChannel<Node option> * index: int
+    | AddPath of chan: AsyncReplyChannel<int> * path: Node
+
+let pathMap = MailboxProcessor.Start(fun inbox ->
+    let rec run (paths: IImmutableList<Node>) = async {
+        match! inbox.Receive() with
+        | GetPath (chan, index) ->
+            try
+                Some (paths.[index])
+            with :? IndexOutOfRangeException ->
+                None
+            |> chan.Reply
+            return! run paths
+        | AddPath (chan, path) ->
+            let npaths = paths.Add(path)
+            chan.Reply(npaths.Count-1)
+            return! run npaths
+    }
+    run ImmutableList.Empty
+)
+pathMap.Error.Add(fun x -> raise x)
 
 type FidState = System.IO.Stream option
 type Session = { Msize: uint32; Fids: Map<uint32, Qid * FidState> }
