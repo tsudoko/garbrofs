@@ -172,17 +172,17 @@ let handle attachHandler session tag msg =
         | Some node ->
             match node with
             | SDirectory (d, entries) ->
-                let rec fittingEntries_ msize (entries: Stat seq) rentries =
+                let rec fittingEntries_ count (entries: Stat seq) rentries =
                     match Seq.tryHead entries with
-                    | Some s -> fittingEntries_ (msize-(uint32 s.Length)) (entries |> Seq.tail) (s :: rentries)
-                    | None -> rentries |> List.map (fun s -> s.Bytes) :> byte [] seq |> Array.concat, entries
-                let fittingEntries msize (entries: Stat seq) =
-                    fittingEntries_ (msize-11u) entries List.empty // TODO: de-hardcode 11 (size of fixed fields for Rread)
+                    | Some s when count >= (uint32 s.Bytes.Length) -> fittingEntries_ (count-(uint32 s.Bytes.Length)) (entries |> Seq.tail) (s :: rentries)
+                    | _ -> rentries |> List.map (fun s -> s.Bytes) :> byte [] seq |> Array.concat, entries
+                let fittingEntries count (entries: Stat seq) =
+                    fittingEntries_ count entries List.empty
 
                 let prepared, remaining =
                     entries
                     |> Option.orElse (d.Entries |> Seq.map (fun n -> n.Stat) |> Some)
-                    |> Option.map (fun e -> fittingEntries session.Msize e)
+                    |> Option.map (fun e -> fittingEntries count e)
                     |> Option.get
                 // maybe TODO: store length of sent responses and check if requested offset matches total sent length (the spec disallows non-sequential reads of directories)
                 { session with Fids = session.Fids.Add(fid, SDirectory (d, Some remaining)) }, Rread prepared
