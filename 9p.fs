@@ -90,7 +90,19 @@ type Stat(bytes: byte []) =
     override st.ToString() =
         sprintf "'%s' '%s' '%s' '%s' q (%016x %d %A) m %012o at %d mt %d l %d t %d d %d" st.Name st.Uid st.Gid st.Muid st.Qid.Path st.Qid.Ver st.Qid.Type st.Mode st.Atime st.Mtime st.Length st.Type st.Dev
 
-    new(type_: uint16, dev: uint32, qid: Qid, mode: uint32, atime: uint32, mtime: uint32, length: uint64, name: string, uid: string, gid: string, muid: string) =
+    new(?type_: uint16, ?dev: uint32, ?qid: Qid, ?mode: uint32, ?atime: uint32, ?mtime: uint32, ?length: uint64, ?name: string, ?uid: string, ?gid: string, ?muid: string) =
+        let type_ = defaultArg type_ 0us
+        let dev = defaultArg dev 0u
+        let qid = defaultArg qid { Type = FileType.File; Ver = 0u; Path = 0UL }
+        let mode = defaultArg mode 0u
+        let atime = defaultArg atime 0u
+        let mtime = defaultArg mtime 0u
+        let length = defaultArg length 0UL
+        let name = defaultArg name ""
+        let uid = defaultArg uid ""
+        let gid = defaultArg gid ""
+        let muid = defaultArg muid ""
+
         let namelen = Encoding.UTF8.GetByteCount(name)
         let uidlen = Encoding.UTF8.GetByteCount(uid)
         let gidlen = Encoding.UTF8.GetByteCount(gid)

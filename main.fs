@@ -56,17 +56,9 @@ type State =
 type TestingDirectory(name: string, entries: Node seq) =
     interface IDirectory with
         member d.Stat =
-            Stat(type_ = 0us,
-                dev = 0u,
-                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
+            Stat(qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
                 mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
-                atime = 0u,
-                mtime = 0u,
-                length = 0UL,
-                name = name,
-                uid = "",
-                gid = "",
-                muid = "")
+                name = name)
 
         member d.Entries =
             entries
@@ -74,17 +66,9 @@ type TestingDirectory(name: string, entries: Node seq) =
 type TestingProxyFile(name: string, path: string) =
     interface IFile with
         member f.Stat =
-            Stat(type_ = 0us,
-                dev = 0u,
-                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
-                mode = 0o444u,
-                atime = 0u,
-                mtime = 0u,
+            Stat(mode = 0o444u,
                 length = uint64 (System.IO.FileInfo(path).Length),
-                name = name,
-                uid = "",
-                gid = "",
-                muid = "")
+                name = name)
 
         member f.Open mode =
             Ok (System.IO.File.OpenRead(path) :> System.IO.Stream)
@@ -92,17 +76,9 @@ type TestingProxyFile(name: string, path: string) =
 type TestingFile(name: string, contents: byte []) =
     interface IFile with
         member f.Stat =
-            Stat(type_ = 0us,
-                dev = 0u,
-                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
-                mode = 0o444u,
-                atime = 0u,
-                mtime = 0u,
+            Stat(mode = 0o444u,
                 length = uint64 contents.Length,
-                name = name,
-                uid = "",
-                gid = "",
-                muid = "")
+                name = name)
 
         member f.Open mode =
             Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
