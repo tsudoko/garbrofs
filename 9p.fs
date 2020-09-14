@@ -20,6 +20,7 @@ type FileType =
     |  Excl   = 0b00100000uy
     |  Auth   = 0b00001000uy
     |  Tmp    = 0b00000100uy
+    |  File   = 0b00000000uy
 
 type MsgType =
     | Tversion = 100uy
