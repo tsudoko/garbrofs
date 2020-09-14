@@ -254,7 +254,6 @@ let listenAndServe (dialString: string) (attachHandler: string -> string -> Resu
     listen dialString
     |> listen_ attachHandler
 
-[<EntryPoint>]
 let main (args: string []) =
     if args.Length < 1 then
         eprintfn "usage: %s tcp!listenaddr!port" (System.Environment.GetCommandLineArgs().[0])
