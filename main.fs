@@ -35,6 +35,10 @@ type NodeWithState =
         match n with
         | SFile (f, _) -> File f
         | SDirectory (d, _) -> Directory d
+    static member fromNode n =
+        match n with
+        | File f -> SFile (f, None)
+        | Directory d -> SDirectory (d, None)
 
 type Session = { Msize: uint32; Fids: Map<uint32, NodeWithState> }
 let EmptySession = { Msize = 8192u; Fids = Map.empty }
@@ -42,10 +46,12 @@ let EmptySession = { Msize = 8192u; Fids = Map.empty }
 type State =
     { Reader: NinePReader
       Writer: NinePWriter
+      AttachHandler: string -> string -> Result<Node, string>
       Session: Session } with
-    static member create(s) =
+    static member create (ah) (s) =
         { Reader = new NinePReader(s)
           Writer = new NinePWriter(s)
+          AttachHandler = ah
           Session = EmptySession }
     // XXX: not sure if this makes sense as the record itself is immutable
     interface IDisposable with
@@ -83,17 +89,7 @@ type TestingFile(name: string, contents: byte []) =
         member f.Open mode =
             Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
 
-let d4 = TestingDirectory("dir4", Seq.empty)
-let fa = TestingFile("a", "awoo"B)
-let fb = TestingFile("b", "AWOO"B)
-let fc = TestingProxyFile("c.fs", "9p.fs")
-let fd = TestingProxyFile("d.fs", "main.fs")
-let d3 = TestingDirectory("dir3", [Directory d4; File fd] :> Node seq)
-let d1 = TestingDirectory("dir1", [Directory d3; File fc] :> Node seq)
-let d2 = TestingDirectory("dir2", Seq.empty)
-let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] :> Node seq)
-
-let handle session tag msg =
+let handle attachHandler session tag msg =
     match msg with
     | Tversion (msize, version) ->
         printfn "got Tversion %d %s" msize version
@@ -106,8 +102,12 @@ let handle session tag msg =
         session, Rerror "no authentication required"
     | Tattach (fid, afid, uname, aname) ->
         printfn "got Tattach %d %d %s %s" fid afid uname aname
-        // TODO: return error if fid in use
-        { session with Fids = session.Fids.Add(fid, SDirectory (root, None)) }, Rattach ((root :> IDirectory).Stat.Qid)
+        match attachHandler uname aname with
+        | Ok root ->
+            // TODO: close open files if any
+            { session with Fids = session.Fids.Add(fid, NodeWithState.fromNode root) }, Rattach (root.Stat.Qid)
+        | Error e ->
+            session, Rerror e
     | Twalk (fid, newfid, wnames) ->
         printfn "got Twalk %A %A %A" fid newfid wnames
         // TODO: handle .. in root dir
@@ -218,7 +218,7 @@ let rec serve state =
     let r =
         P2000.tryReadMsg state.Reader state.Session.Msize
         |> Result.bind (fun (tag, tmsg) ->
-            let nsession, rmsg = handle state.Session tag tmsg
+            let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
             P2000.tryWriteMsg state.Writer tag rmsg
             |> Result.map (fun _ -> nsession)
         )
@@ -231,23 +231,44 @@ let rec serve state =
         state.Reader.Dispose()
         state.Writer.Dispose()
 
-let rec listen (listener: TcpListener) =
-    let client = listener.AcceptTcpClient()
-    client.GetStream()
-    |> State.create
+let rec listen_ (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
+    getClientStream()
+    |> State.create attachHandler
     |> serve // TODO: don't block
-    listen listener
+    listen_ attachHandler getClientStream
+
+// TODO: move to another module to avoid name clashes
+let listen (spec: string): unit -> System.IO.Stream =
+    let args = spec.Split('!')
+    match args.[0] with
+    | "tcp" ->
+        let addr = IPAddress.Parse(args.[1])
+        let port = Int32.Parse(args.[2])
+        let listener = new TcpListener(addr, port)
+        listener.Start()
+        fun () -> listener.AcceptTcpClient().GetStream() :> System.IO.Stream
+    | x -> sprintf "unsupported dial protocol: %s" args.[0] |> failwith
+
+let listenAndServe (dialString: string) (attachHandler: string -> string -> Result<Node, string>) =
+    printfn "listening @ %s" dialString // TODO: don't print this until we actually create the listening socket
+    listen dialString
+    |> listen_ attachHandler
 
 [<EntryPoint>]
 let main (args: string []) =
-    if args.Length < 2 then
-        eprintfn "usage: %s addr port" (System.Environment.GetCommandLineArgs().[0])
+    if args.Length < 1 then
+        eprintfn "usage: %s tcp!listenaddr!port" (System.Environment.GetCommandLineArgs().[0])
         1
     else
 
-    let addr = IPAddress.Parse(args.[0])
-    let port = Int32.Parse(args.[1])
-    let listener = new TcpListener(addr, port)
-    listener.Start()
-    printfn "listening @ %s:%s" args.[0] args.[1]
-    listen listener
+    let d4 = TestingDirectory("dir4", Seq.empty)
+    let fa = TestingFile("a", "awoo"B)
+    let fb = TestingFile("b", "AWOO"B)
+    let fc = TestingProxyFile("c.fs", "9p.fs")
+    let fd = TestingProxyFile("d.fs", "main.fs")
+    let d3 = TestingDirectory("dir3", [Directory d4; File fd] :> Node seq)
+    let d1 = TestingDirectory("dir1", [Directory d3; File fc] :> Node seq)
+    let d2 = TestingDirectory("dir2", Seq.empty)
+    let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] :> Node seq)
+
+    listenAndServe args.[0] (fun _ _ -> Ok (Directory root))
