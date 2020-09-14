@@ -1,58 +1,42 @@
-module Main
+module NineP.Server
 open System
 open System.Collections.Generic
-open System.Collections.Immutable
 open System.Net
 open System.Net.Sockets
 
 open NineP
 
-// TODO: move root to separate var, make paths immutable? archives don't change when they're mounted
-// archives don't change, but it's generally impractical to pre-compute all paths if the server acts as an overlay as most files aren't ever going to be accessed unless someone runs du or something
-// even more so if it's an overlay over a remote location
-let mutable paths: Stat list = [Stat(
-    type_ = 0us,
-    dev = 0u,
-    qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
-    mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
-    atime = 0u,
-    mtime = 0u,
-    length = 0UL,
-    name = "/",
-    uid = "nobody",
-    gid = "nobody",
-    muid = "nobody"
-)]
+type IDirectory =
+    abstract member Stat: Stat
+    abstract member Entries: Node seq
+and IFile =
+    abstract member Stat: Stat
+    abstract member Open: OpenMode -> Result<System.IO.Stream, string>
+and Node =
+    | File of IFile
+    | Directory of IDirectory
+    // TODO: reduce boilerplate
+    with
+    member n.Stat =
+        match n with
+        | File f -> f.Stat
+        | Directory d -> d.Stat
 
-type Node =
-    | File      of Stat: (Node -> Stat) * Open: (Node -> OpenMode -> System.IO.Stream)
-    | Directory of Stat: (Node -> Stat) * Contents: (Node -> Node seq)
+type NodeWithState =
+    | SFile of IFile * System.IO.Stream option
+    | SDirectory of IDirectory * Stat seq option
+    // TODO: reduce boilerplate
+    with
+    member n.Stat =
+        match n with
+        | SFile (f, _) -> f.Stat
+        | SDirectory (d, _) -> d.Stat
+    member n.Node =
+        match n with
+        | SFile (f, _) -> File f
+        | SDirectory (d, _) -> Directory d
 
-type PathMapMsg =
-    | GetPath of chan: AsyncReplyChannel<Node option> * index: int
-    | AddPath of chan: AsyncReplyChannel<int> * path: Node
-
-let pathMap = MailboxProcessor.Start(fun inbox ->
-    let rec run (paths: IImmutableList<Node>) = async {
-        match! inbox.Receive() with
-        | GetPath (chan, index) ->
-            try
-                Some (paths.[index])
-            with :? IndexOutOfRangeException ->
-                None
-            |> chan.Reply
-            return! run paths
-        | AddPath (chan, path) ->
-            let npaths = paths.Add(path)
-            chan.Reply(npaths.Count-1)
-            return! run npaths
-    }
-    run ImmutableList.Empty
-)
-pathMap.Error.Add(fun x -> raise x)
-
-type FidState = System.IO.Stream option
-type Session = { Msize: uint32; Fids: Map<uint32, Qid * FidState> }
+type Session = { Msize: uint32; Fids: Map<uint32, NodeWithState> }
 let EmptySession = { Msize = 8192u; Fids = Map.empty }
 
 type State =
@@ -69,6 +53,70 @@ type State =
             s.Reader.Dispose()
             s.Writer.Dispose()
 
+type TestingDirectory(name: string, entries: Node seq) =
+    interface IDirectory with
+        member d.Stat =
+            Stat(type_ = 0us,
+                dev = 0u,
+                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
+                mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
+                atime = 0u,
+                mtime = 0u,
+                length = 0UL,
+                name = name,
+                uid = "",
+                gid = "",
+                muid = "")
+
+        member d.Entries =
+            entries
+
+type TestingProxyFile(name: string, path: string) =
+    interface IFile with
+        member f.Stat =
+            Stat(type_ = 0us,
+                dev = 0u,
+                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
+                mode = 0o444u,
+                atime = 0u,
+                mtime = 0u,
+                length = uint64 (System.IO.FileInfo(path).Length),
+                name = name,
+                uid = "",
+                gid = "",
+                muid = "")
+
+        member f.Open mode =
+            Ok (System.IO.File.OpenRead(path) :> System.IO.Stream)
+
+type TestingFile(name: string, contents: byte []) =
+    interface IFile with
+        member f.Stat =
+            Stat(type_ = 0us,
+                dev = 0u,
+                qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
+                mode = 0o444u,
+                atime = 0u,
+                mtime = 0u,
+                length = uint64 contents.Length,
+                name = name,
+                uid = "",
+                gid = "",
+                muid = "")
+
+        member f.Open mode =
+            Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
+
+let d4 = TestingDirectory("dir4", Seq.empty)
+let fa = TestingFile("a", "awoo"B)
+let fb = TestingFile("b", "AWOO"B)
+let fc = TestingProxyFile("c.fs", "9p.fs")
+let fd = TestingProxyFile("d.fs", "main.fs")
+let d3 = TestingDirectory("dir3", [Directory d4; File fd] :> Node seq)
+let d1 = TestingDirectory("dir1", [Directory d3; File fc] :> Node seq)
+let d2 = TestingDirectory("dir2", Seq.empty)
+let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] :> Node seq)
+
 let handle session tag msg =
     match msg with
     | Tversion (msize, version) ->
@@ -83,21 +131,46 @@ let handle session tag msg =
     | Tattach (fid, afid, uname, aname) ->
         printfn "got Tattach %d %d %s %s" fid afid uname aname
         // TODO: return error if fid in use
-        { session with Fids = session.Fids.Add(fid, (paths.[0].Qid, None)) }, Rattach (paths.[0].Qid)
+        { session with Fids = session.Fids.Add(fid, SDirectory (root, None)) }, Rattach ((root :> IDirectory).Stat.Qid)
     | Twalk (fid, newfid, wnames) ->
         printfn "got Twalk %A %A %A" fid newfid wnames
         // TODO: handle .. in root dir
-        if wnames.Length = 0 then
-            let ns =
-                if newfid <> fid then
-                    // TODO: return error if newfid in use (unless newfid = fid) or fid not found or fid open
-                    let (qid, _) = session.Fids.[fid]
-                    { session with Fids = session.Fids.Add(newfid, (qid, None)) }
-                else
-                    session
-            ns, Rwalk [||]
-        else
-            session, Rerror "Twalk on random files unimplemented"
+
+        // this is not very efficient
+        let rec doWalk_ (root: Node) wnames (dirs: Node list) =
+            match root with
+            | File f -> dirs |> List.rev
+            | Directory d ->
+                match wnames |> Array.tryHead with
+                | None -> dirs |> List.rev
+                | Some n ->
+                    match d.Entries |> Seq.tryFind (fun e -> e.Stat.Name = n) with
+                    | None -> dirs |> List.rev
+                    | Some e -> doWalk_ e (wnames |> Array.tail) (e :: dirs)
+        let doWalk (root: Node) wnames =
+            doWalk_ root wnames List.empty
+
+        match session.Fids.TryFind(fid) with
+        | None -> session, Rerror "fid unknown or out of range"
+        | Some e ->
+            let dirs = wnames |> doWalk e.Node
+            let newRoot =
+                dirs
+                |> List.tryLast
+                |> Option.defaultValue e.Node
+            match dirs = List.empty && wnames.Length <> 0 with
+            | true -> session, Rerror "no such file or directory"
+            | false ->
+                // TODO: return error if newfid in use (unless newfid = fid) or fid open
+                let session' =
+                    match newfid <> fid with
+                    | false -> session
+                    | true ->
+                        // TODO: reduce boilerplate
+                        match newRoot with
+                        | File f -> { session with Fids = session.Fids.Add(newfid, SFile (f, None)) }
+                        | Directory d -> { session with Fids = session.Fids.Add(newfid, SDirectory (d, None)) }
+                session', Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
         printfn "got Topen %d %A" fid mode
         if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
@@ -106,18 +179,39 @@ let handle session tag msg =
             match session.Fids.TryFind(fid) with
             | None ->
                 session, Rerror "fid unknown or out of range"
-            | Some (qid, _) ->
-                { session with Fids = session.Fids.Add(fid, (qid, Some (upcast (new System.IO.MemoryStream("awoo"B))))) }, Ropen (qid, 0u)
+            | Some node  ->
+                // TODO: either support multiple open streams here or disallow multiple open calls, we're going to leak streams otherwise
+                match node with
+                | SDirectory (d, _) ->
+                    session, Ropen (d.Stat.Qid, 0u)
+                | SFile (f, _) ->
+                    match f.Open(mode) with
+                    | Error e -> session, Rerror e
+                    | Ok stream -> { session with Fids = session.Fids.Add(fid, SFile (f, Some stream)) }, Ropen (f.Stat.Qid, 0u)
     | Tread (fid, offset, count) ->
         printfn "got Tread %d %d %d" fid offset count
         match session.Fids.TryFind(fid) with
         | None ->
             session, Rerror "fid unknown or out of range"
-        | Some (qid, ms) ->
-            match qid.Type.HasFlag(FileType.Dir) with
-            | true -> session, Rread [||] // empty directory
-            | false ->
-                match ms with
+        | Some node ->
+            match node with
+            | SDirectory (d, entries) ->
+                let rec fittingEntries_ msize (entries: Stat seq) rentries =
+                    match Seq.tryHead entries with
+                    | Some s -> fittingEntries_ (msize-(uint32 s.Length)) (entries |> Seq.tail) (s :: rentries)
+                    | None -> rentries |> List.map (fun s -> s.Bytes) :> byte [] seq |> Array.concat, entries
+                let fittingEntries msize (entries: Stat seq) =
+                    fittingEntries_ (msize-11u) entries List.empty // TODO: de-hardcode 11 (size of fixed fields for Rread)
+
+                let prepared, remaining =
+                    entries
+                    |> Option.orElse (d.Entries |> Seq.map (fun n -> n.Stat) |> Some)
+                    |> Option.map (fun e -> fittingEntries session.Msize e)
+                    |> Option.get
+                // maybe TODO: store length of sent responses and check if requested offset matches total sent length (the spec disallows non-sequential reads of directories)
+                { session with Fids = session.Fids.Add(fid, SDirectory (d, Some remaining)) }, Rread prepared
+            | SFile (f, stream) ->
+                match stream with
                 | None ->
                     session, Rerror "file not open"
                 | Some s ->
@@ -129,13 +223,16 @@ let handle session tag msg =
                     session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
     | Tclunk fid ->
         printfn "got Tclunk %d" fid
-        let (_, ms) = session.Fids.[fid]
-        ms |> Option.map (fun s -> s.Dispose())
+        // TODO: handle invalid fid
+        let node = session.Fids.[fid]
+        match node with
+        | SFile (_, stream) -> stream |> Option.map (fun s -> s.Dispose())
+        | _ -> None
         { session with Fids = session.Fids.Remove(fid) }, Rclunk
     | Tstat fid ->
         printfn "got Tstat %d" fid
-        let (qid, _) = session.Fids.[fid]
-        session, Rstat paths.[int qid.Path]
+        let node = session.Fids.[fid]
+        session, Rstat node.Stat
         // TODO: handle missing and invalid paths (from either qids or paths)
         //session, Rerror "Tstat unimplemented"
     | x ->
