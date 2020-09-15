@@ -24,7 +24,7 @@ and Node =
 
 type NodeWithState =
     | SFile of IFile * System.IO.Stream option
-    | SDirectory of IDirectory * Stat seq option
+    | SDirectory of IDirectory * Stat list option
     // TODO: reduce boilerplate
     with
     member n.Stat =
@@ -172,16 +172,16 @@ let handle attachHandler session tag msg =
         | Some node ->
             match node with
             | SDirectory (d, entries) ->
-                let rec fittingEntries_ count (entries: Stat seq) rentries =
-                    match Seq.tryHead entries with
-                    | Some s when count >= (uint32 s.Bytes.Length) -> fittingEntries_ (count-(uint32 s.Bytes.Length)) (entries |> Seq.tail) (s :: rentries)
+                let rec fittingEntries_ count (entries: Stat list) rentries =
+                    match entries with
+                    | s :: tail when count >= (uint32 s.Bytes.Length) -> fittingEntries_ (count-(uint32 s.Bytes.Length)) tail (s :: rentries)
                     | _ -> rentries |> List.map (fun s -> s.Bytes) :> byte [] seq |> Array.concat, entries
-                let fittingEntries count (entries: Stat seq) =
+                let fittingEntries count (entries: Stat list) =
                     fittingEntries_ count entries List.empty
 
                 let prepared, remaining =
                     entries
-                    |> Option.orElse (d.Entries |> Seq.map (fun n -> n.Stat) |> Some)
+                    |> Option.orElse (d.Entries |> Seq.map (fun n -> n.Stat) |> Seq.toList |> Some)
                     |> Option.map (fun e -> fittingEntries count e)
                     |> Option.get
                 // maybe TODO: store length of sent responses and check if requested offset matches total sent length (the spec disallows non-sequential reads of directories)
