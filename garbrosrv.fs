@@ -15,12 +15,17 @@ let private pathCounter = MailboxProcessor<AsyncReplyChannel<uint64>>.Start(fun 
 pathCounter.Error.Add(fun x -> raise x)
 
 type File(arc: GameRes.ArcFile, entry: GameRes.Entry) =
+    let entrySize =
+        match entry with
+        | :? GameRes.PackedEntry as entry -> entry.UnpackedSize
+        | _ -> entry.Size
+
     let stat = Stat(
         qid = { Type = FileType.File; Ver = 0u; Path = pathCounter.PostAndReply(fun chan -> chan) },
         mode = 0o444u,
         atime = 0u,
         mtime = 0u,
-        length = uint64 entry.Size, // TODO: use UnpackedSize if entry is PackedEntry (why is this a thing)
+        length = uint64 entrySize,
         name = entry.Name)
 
     interface IFile with
