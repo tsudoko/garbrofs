@@ -39,8 +39,8 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry) =
             else
                 Ok (arc.OpenSeekableEntry(entry))
 
-type Directory (stat: Stat, entries: Node []) =
-    new(entries: Node [], name: string) =
+type Directory (stat: Stat, entries: IImmutableList<Node>) =
+    new(entries: IImmutableList<Node>, name: string) =
         Directory(Stat(
             qid = { Type = FileType.Dir; Ver = 0u; Path = pathCounter.PostAndReply(fun chan -> chan) },
             mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
@@ -64,7 +64,7 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     |> printfn "%s"
     arc.Dir
     |> Seq.map (fun entry -> File(arc, entry) :> IFile |> Node.File)
-    |> Array.ofSeq
+    |> ImmutableList.Empty.AddRange
     |> fun entries -> Directory(entries, "/")
     :> IDirectory
     |> Node.Directory
