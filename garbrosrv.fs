@@ -103,22 +103,36 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     |> Node.Directory
 
 let loadArchive path =
+    // this mess allows all matching handlers to attempt to open the file while
+    // also ensuring errors are not lost and properly reported
+    let openArc (arcview: GameRes.ArcView) (impls: seq<GameRes.ArchiveFormat>) =
+        let rec openArc' errors (arcview: GameRes.ArcView) (impls: seq<GameRes.ArchiveFormat>) =
+            match impls |> Seq.tryHead with
+            | Some impl ->
+                try
+                    match impl.TryOpen arcview with
+                    | null -> openArc' errors arcview (impls |> Seq.tail)
+                    | arc -> impl.IsHierarchic, arc
+                with :? Exception as e ->
+                    let emsg = sprintf "%A: %s" impl e.Message
+                    openArc' (emsg :: errors) arcview (impls |> Seq.tail)
+            | None ->
+                match errors with
+                | [] -> failwithf "no handlers found for %s" path
+                | x ->
+                    (sprintf "no handlers found for %s, some handlers returned errors:" path) :: x
+                    :> seq<'a>
+                    |> String.concat "\n"
+                    |> failwith
+        openArc' List.empty arcview impls
+
     // GameRes.ArcFile.TryOpen uses VFS (global mutable state), can't use it here
     try
         let av = new GameRes.ArcView(path)
         let signature = av.View.ReadUInt32(0L)
         // TODO: do extensions too? there might be formats without signatures
         GameRes.FormatCatalog.Instance.LookupSignature<GameRes.ArchiveFormat>(signature)
-        |> Seq.tryPick (fun impl ->
-            // TODO: wrap in another try block here to continue trying even if some
-            //       extractor throws something? that's what GameRes.ArcFile.TryOpen
-            //       does, but try ... with _ -> None would also obscure potentially
-            //       useful errors in case the match wasn't a false positive but the
-            //       handler couldn't handle that particular file for some reason
-            impl.TryOpen av
-            |> Option.ofObj
-            |> Option.map (fun arc -> impl.IsHierarchic, arc))
-        |> Option.defaultWith (fun () -> failwithf "no handlers found for %s" path)
+        |> openArc av
         ||> treeFromArc
         |> Ok
     with :? Exception as e -> Error e.Message
