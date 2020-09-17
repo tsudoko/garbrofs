@@ -102,41 +102,26 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     :> IDirectory
     |> Node.Directory
 
-// since impl.TryOpen doesn't actually behave like regular try* functions
-let private realTryOpen (arcview: GameRes.ArcView) (impl: GameRes.ArchiveFormat) =
-    try
-        match impl.TryOpen arcview with
-        | null -> Error (sprintf "%A: failed to open %s" impl arcview.Name)
-        | x -> Ok x
-    with
-    | :? System.Exception as e -> Error e.Message
-
-module SeqExt =
-    /// Picks the first element from source for which chooser returns Ok x.
-    /// Keeps track of last encountered error. If the input sequence is empty,
-    /// defaultVal is returned.
-    // FIXME: this seems unnecessarily convoluted, do we actually care about
-    //        errors returned by non-Ok calls? if we do, wouldn't it make more
-    //        sense to track all of them instead of just the last one?
-    let rec pickOrElse chooser defaultVal source =
-        match source |> Seq.tryHead with
-        | None -> defaultVal
-        | Some x ->
-            let res = chooser x
-            match res with
-            | Ok v -> res
-            | Error x -> pickOrElse chooser res (source |> Seq.tail)
-
 let loadArchive path =
     // GameRes.ArcFile.TryOpen uses VFS (global mutable state), can't use it here
-    let av = new GameRes.ArcView(path) // TODO: handle potential exceptions (maybe for the whole function, ReadUInt32 can throw too, LookupSignature might want to throw too)
-    let signature = av.View.ReadUInt32(0L)
-    // TODO: do extensions too? there might be formats without signatures
-    GameRes.FormatCatalog.Instance.LookupSignature<GameRes.ArchiveFormat>(signature)
-    |> SeqExt.pickOrElse
-        (fun impl -> impl |> realTryOpen av |> Result.map (fun x -> impl.IsHierarchic, x))
-        (sprintf "no handlers found for %s" path |> Error)
-    |> Result.map (fun (isHierarchic, arc) -> treeFromArc isHierarchic arc)
+    try
+        let av = new GameRes.ArcView(path)
+        let signature = av.View.ReadUInt32(0L)
+        // TODO: do extensions too? there might be formats without signatures
+        GameRes.FormatCatalog.Instance.LookupSignature<GameRes.ArchiveFormat>(signature)
+        |> Seq.tryPick (fun impl ->
+            // TODO: wrap in another try block here to continue trying even if some
+            //       extractor throws something? that's what GameRes.ArcFile.TryOpen
+            //       does, but try ... with _ -> None would also obscure potentially
+            //       useful errors in case the match wasn't a false positive but the
+            //       handler couldn't handle that particular file for some reason
+            impl.TryOpen av
+            |> Option.ofObj
+            |> Option.map (fun arc -> impl.IsHierarchic, arc))
+        |> Option.defaultWith (fun () -> failwithf "no handlers found for %s" path)
+        ||> treeFromArc
+        |> Ok
+    with :? Exception as e -> Error e.Message
 
 [<EntryPoint>]
 let main (args: string []) =
