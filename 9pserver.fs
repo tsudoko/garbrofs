@@ -6,6 +6,8 @@ open System.Net.Sockets
 
 open NineP
 
+let mutable chatty = false
+
 type IDirectory =
     abstract member Stat: Stat
     abstract member Entries: Node seq
@@ -90,9 +92,10 @@ type TestingFile(name: string, contents: byte []) =
             Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
 
 let handle attachHandler session tag msg =
+    if chatty then
+        eprintfn "got %A %d" msg tag
     match msg with
     | Tversion (msize, version) ->
-        printfn "got Tversion %d %s" msize version
         if version.StartsWith("9P2000") then
             // TODO: clamp msize when received msize > default msize? it's not like we care that much though as long as it's not something ridiculous
             { EmptySession with Msize = msize }, Rversion (msize, "9P2000")
@@ -101,7 +104,6 @@ let handle attachHandler session tag msg =
     | Tauth _ ->
         session, Rerror "no authentication required"
     | Tattach (fid, afid, uname, aname) ->
-        printfn "got Tattach %d %d %s %s" fid afid uname aname
         match attachHandler uname aname with
         | Ok root ->
             // TODO: close open files if any
@@ -109,7 +111,6 @@ let handle attachHandler session tag msg =
         | Error e ->
             session, Rerror e
     | Twalk (fid, newfid, wnames) ->
-        printfn "got Twalk %A %A %A" fid newfid wnames
         // TODO: handle .. in root dir
 
         // this is not very efficient
@@ -148,7 +149,6 @@ let handle attachHandler session tag msg =
                         | Directory d -> { session with Fids = session.Fids.Add(newfid, SDirectory (d, None)) }
                 session', Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
-        printfn "got Topen %d %A" fid mode
         if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
             session, Rerror "read only file system"
         else
@@ -165,7 +165,6 @@ let handle attachHandler session tag msg =
                     | Error e -> session, Rerror e
                     | Ok stream -> { session with Fids = session.Fids.Add(fid, SFile (f, Some stream)) }, Ropen (f.Stat.Qid, 0u)
     | Tread (fid, offset, count) ->
-        printfn "got Tread %d %d %d" fid offset count
         match session.Fids.TryFind(fid) with
         | None ->
             session, Rerror "fid unknown or out of range"
@@ -198,7 +197,6 @@ let handle attachHandler session tag msg =
                     let nread = s.Read(buf, 0, (int count))
                     session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
     | Tclunk fid ->
-        printfn "got Tclunk %d" fid
         // TODO: handle invalid fid
         let node = session.Fids.[fid]
         match node with
@@ -206,7 +204,6 @@ let handle attachHandler session tag msg =
         | _ -> None
         { session with Fids = session.Fids.Remove(fid) }, Rclunk
     | Tstat fid ->
-        printfn "got Tstat %d" fid
         let node = session.Fids.[fid]
         session, Rstat node.Stat
         // TODO: handle missing and invalid paths (from either qids or paths)

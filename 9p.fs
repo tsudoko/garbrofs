@@ -201,7 +201,6 @@ module P2000 =
         let len = r.ReadUInt32()
         let mtype = LanguagePrimitives.EnumOfValue (r.ReadByte())
         let tag = r.ReadUInt16()
-        printfn "mtype %d %A tag %d" (uint8 mtype) mtype tag
 
         let msg: Tmsg =
             match mtype with
