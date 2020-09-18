@@ -106,7 +106,7 @@ let handle attachHandler session tag msg =
         else
             EmptySession, Rversion (msize, "unknown")
     | Tauth _ ->
-        session, Rerror "no authentication required"
+        session, Rerror Enoauth
     | Tattach (fid, afid, uname, aname) ->
         match attachHandler uname aname with
         | Ok root ->
@@ -133,7 +133,7 @@ let handle attachHandler session tag msg =
             doWalk_ root wnames List.empty
 
         match session.Fids.TryFind(fid) with
-        | None -> session, Rerror "fid unknown or out of range"
+        | None -> session, Rerror Enofid
         | Some e ->
             let dirs = wnames |> doWalk e.Node
             let newRoot =
@@ -141,21 +141,21 @@ let handle attachHandler session tag msg =
                 |> List.tryLast
                 |> Option.defaultValue e.Node
             if dirs = List.empty && wnames.Length <> 0 then
-                session, Rerror "no such file or directory" // FIXME: this breaks create attempts
+                session, Rerror Enotexist // FIXME: this breaks create attempts
             else if e.IsOpen then
-                session, Rerror "file already open for I/O"
+                session, Rerror Eisopen
             else if newfid <> fid && session.Fids.TryFind(newfid).IsSome then
-                session, Rerror "fid already in use"
+                session, Rerror Einuse
             else
                 { session with Fids = session.Fids.Add(newfid, NodeWithState.fromNode newRoot) }, Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
         // TODO: de-hardcode somehow, not sure if this is worth keeping at all though as you can just check file mode on a case-by-case basis
         if mode |> OpenMode.requiresWritePerm then
-            session, Rerror "read only file system"
+            session, Rerror Erdonly
         else
             match session.Fids.TryFind(fid) with
             | None ->
-                session, Rerror "fid unknown or out of range"
+                session, Rerror Enofid
             | Some node  ->
                 // TODO: either support multiple open streams here or disallow multiple open calls, we're going to leak streams otherwise
                 match node with
@@ -164,7 +164,7 @@ let handle attachHandler session tag msg =
                 | SFile (f, _) ->
                     // TODO: maybe care about user/group modes too
                     if mode |> OpenMode.requiresWritePerm && not (f.Stat.Mode &&& 2u = 2u) then
-                        session, Rerror "file is read only"
+                        session, Rerror Eperm
                     else
                     match f.Open() with
                     | Error e -> session, Rerror e
@@ -172,7 +172,7 @@ let handle attachHandler session tag msg =
     | Tread (fid, offset, count) ->
         match session.Fids.TryFind(fid) with
         | None ->
-            session, Rerror "fid unknown or out of range"
+            session, Rerror Enofid
         | Some node ->
             match node with
             | SDirectory (d, entries) ->
@@ -193,7 +193,7 @@ let handle attachHandler session tag msg =
             | SFile (f, stream) ->
                 match stream with
                 | None ->
-                    session, Rerror "file not open"
+                    session, Rerror Enotopen
                 | Some s ->
                     // XXX: return error on overflow
                     if s.Position <> Checked.int64 offset then
@@ -203,7 +203,7 @@ let handle attachHandler session tag msg =
                     session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
     | Tclunk fid ->
         match session.Fids.TryFind(fid) with
-        | None -> session, Rerror "fid unknown or out of range"
+        | None -> session, Rerror Enofid
         | Some node ->
             match node with
             | SFile (_, stream) -> stream |> Option.map (fun s -> s.Dispose())
@@ -212,7 +212,7 @@ let handle attachHandler session tag msg =
             { session with Fids = session.Fids.Remove(fid) }, Rclunk
     | Tstat fid ->
         match session.Fids.TryFind(fid) with
-        | None -> session, Rerror "fid unknown or out of range"
+        | None -> session, Rerror Enofid
         | Some node -> session, Rstat node.Stat
     | x ->
         session, Rerror <| sprintf "%A unimplemented" x

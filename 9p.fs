@@ -4,6 +4,28 @@ open System
 open System.Text
 open System.Buffers.Binary
 
+[<AutoOpen>]
+module Errstr =
+    [<Literal>]
+    let Einuse = "file in use"
+    [<Literal>]
+    let Eisopen = "file already open for I/O"
+    [<Literal>]
+    let Enoauth = "no authentication required"
+    [<Literal>]
+    let Enofid = "no such fid"
+    [<Literal>]
+    let Enotexist = "file does not exist"
+    [<Literal>]
+    let Enotopen = "file is not open"
+    [<Literal>]
+    let Eoffset = "bad offset"
+    [<Literal>]
+    let Eperm = "permission denied"
+    [<Literal>]
+    let Erdonly = "read only file system"
+
+
 [<System.Flags>]
 type OpenMode =
     | Read   = 0uy
