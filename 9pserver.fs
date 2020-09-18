@@ -13,7 +13,7 @@ type IDirectory =
     abstract member Entries: Node seq
 and IFile =
     abstract member Stat: Stat
-    abstract member Open: OpenMode -> Result<System.IO.Stream, string>
+    abstract member Open: unit -> Result<System.IO.Stream, string>
 and Node =
     | File of IFile
     | Directory of IDirectory
@@ -78,7 +78,7 @@ type TestingProxyFile(name: string, path: string) =
                 length = uint64 (System.IO.FileInfo(path).Length),
                 name = name)
 
-        member f.Open mode =
+        member f.Open() =
             Ok (System.IO.File.OpenRead(path) :> System.IO.Stream)
 
 type TestingFile(name: string, contents: byte []) =
@@ -88,7 +88,7 @@ type TestingFile(name: string, contents: byte []) =
                 length = uint64 contents.Length,
                 name = name)
 
-        member f.Open mode =
+        member f.Open() =
             Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
 
 let handle attachHandler session tag msg =
@@ -149,7 +149,8 @@ let handle attachHandler session tag msg =
                         | Directory d -> { session with Fids = session.Fids.Add(newfid, SDirectory (d, None)) }
                 session', Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
-        if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
+        // TODO: de-hardcode somehow, not sure if this is worth keeping at all though as you can just check file mode on a case-by-case basis
+        if mode |> OpenMode.requiresWritePerm then
             session, Rerror "read only file system"
         else
             match session.Fids.TryFind(fid) with
@@ -161,7 +162,11 @@ let handle attachHandler session tag msg =
                 | SDirectory (d, _) ->
                     session, Ropen (d.Stat.Qid, 0u)
                 | SFile (f, _) ->
-                    match f.Open(mode) with
+                    // TODO: maybe care about user/group modes too
+                    if mode |> OpenMode.requiresWritePerm && not (f.Stat.Mode &&& 2u = 2u) then
+                        session, Rerror "file is read only"
+                    else
+                    match f.Open() with
                     | Error e -> session, Rerror e
                     | Ok stream -> { session with Fids = session.Fids.Add(fid, SFile (f, Some stream)) }, Ropen (f.Stat.Qid, 0u)
     | Tread (fid, offset, count) ->

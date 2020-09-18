@@ -33,12 +33,8 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry, ?name: string) =
         member f.Stat =
             stat
 
-        member f.Open(mode) =
-            // TODO: handle automatically in NineP.Server based on stat.Mode
-            if mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr) then
-                Error "read only file system"
-            else
-                Ok (arc.OpenSeekableEntry(entry))
+        member f.Open() =
+            Ok (arc.OpenSeekableEntry(entry))
 
 type Directory (stat: Stat, entries: Map<string, Node>) =
     new(entries: Map<string, Node>, name: string) =

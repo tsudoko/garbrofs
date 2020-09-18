@@ -12,6 +12,9 @@ type OpenMode =
     | Exec   = 3uy
     | Trunc  = 0x10uy
     | Rclose = 0x40uy
+module OpenMode =
+    let requiresWritePerm (mode: OpenMode) =
+        mode.HasFlag(OpenMode.Write) || mode.HasFlag(OpenMode.Rdwr)
 
 [<System.Flags>]
 type FileType =
