@@ -37,6 +37,10 @@ type NodeWithState =
         match n with
         | SFile (f, _) -> File f
         | SDirectory (d, _) -> Directory d
+    member n.IsOpen =
+        match n with
+        | SFile (_, Some _) | SDirectory (_, Some _) -> true
+        | _ -> false
     static member fromNode n =
         match n with
         | File f -> SFile (f, None)
@@ -111,6 +115,7 @@ let handle attachHandler session tag msg =
         | Error e ->
             session, Rerror e
     | Twalk (fid, newfid, wnames) ->
+        // TODO: handle ..
         // TODO: handle .. in root dir
 
         // this is not very efficient
@@ -135,19 +140,14 @@ let handle attachHandler session tag msg =
                 dirs
                 |> List.tryLast
                 |> Option.defaultValue e.Node
-            match dirs = List.empty && wnames.Length <> 0 with
-            | true -> session, Rerror "no such file or directory"
-            | false ->
-                // TODO: return error if newfid in use (unless newfid = fid) or fid open
-                let session' =
-                    match newfid <> fid with
-                    | false -> session
-                    | true ->
-                        // TODO: reduce boilerplate
-                        match newRoot with
-                        | File f -> { session with Fids = session.Fids.Add(newfid, SFile (f, None)) }
-                        | Directory d -> { session with Fids = session.Fids.Add(newfid, SDirectory (d, None)) }
-                session', Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
+            if dirs = List.empty && wnames.Length <> 0 then
+                session, Rerror "no such file or directory" // FIXME: this breaks create attempts
+            else if e.IsOpen then
+                session, Rerror "file already open for I/O"
+            else if newfid <> fid && session.Fids.TryFind(newfid).IsSome then
+                session, Rerror "fid already in use"
+            else
+                { session with Fids = session.Fids.Add(newfid, NodeWithState.fromNode newRoot) }, Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
         // TODO: de-hardcode somehow, not sure if this is worth keeping at all though as you can just check file mode on a case-by-case basis
         if mode |> OpenMode.requiresWritePerm then
@@ -202,17 +202,18 @@ let handle attachHandler session tag msg =
                     let nread = s.Read(buf, 0, (int count))
                     session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
     | Tclunk fid ->
-        // TODO: handle invalid fid
-        let node = session.Fids.[fid]
-        match node with
-        | SFile (_, stream) -> stream |> Option.map (fun s -> s.Dispose())
-        | _ -> None
-        { session with Fids = session.Fids.Remove(fid) }, Rclunk
+        match session.Fids.TryFind(fid) with
+        | None -> session, Rerror "fid unknown or out of range"
+        | Some node ->
+            match node with
+            | SFile (_, stream) -> stream |> Option.map (fun s -> s.Dispose())
+            | _ -> None
+            |> ignore
+            { session with Fids = session.Fids.Remove(fid) }, Rclunk
     | Tstat fid ->
-        let node = session.Fids.[fid]
-        session, Rstat node.Stat
-        // TODO: handle missing and invalid paths (from either qids or paths)
-        //session, Rerror "Tstat unimplemented"
+        match session.Fids.TryFind(fid) with
+        | None -> session, Rerror "fid unknown or out of range"
+        | Some node -> session, Rstat node.Stat
     | x ->
         session, Rerror <| sprintf "%A unimplemented" x
 
