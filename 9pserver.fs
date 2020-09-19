@@ -250,6 +250,11 @@ let listen (spec: string): unit -> System.IO.Stream =
         let listener = new TcpListener(addr, port)
         listener.Start()
         fun () -> listener.AcceptTcpClient().GetStream() :> System.IO.Stream
+    | "netpipe" ->
+        fun () ->
+            let pipe = System.IO.Pipes.NamedPipeServerStream(args.[1])
+            pipe.WaitForConnection()
+            pipe :> System.IO.Stream
     | x -> sprintf "unsupported dial protocol: %s" args.[0] |> failwith
 
 let listenAndServe (dialString: string) (attachHandler: string -> string -> Result<Node, string>) =
