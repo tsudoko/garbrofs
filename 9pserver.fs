@@ -85,7 +85,7 @@ type TestingProxyFile(name: string, path: string) =
                 name = name)
 
         member f.Open() =
-            Ok (System.IO.File.OpenRead(path) :> System.IO.Stream)
+            Ok (System.IO.File.OpenRead(path) :> _)
 
 type TestingFile(name: string, contents: byte []) =
     interface IFile with
@@ -95,7 +95,7 @@ type TestingFile(name: string, contents: byte []) =
                 name = name)
 
         member f.Open() =
-            Ok (new System.IO.MemoryStream(contents) :> System.IO.Stream)
+            Ok (new System.IO.MemoryStream(contents) :> _)
 
 let handle attachHandler session tag msg =
     if chatty then
@@ -250,12 +250,12 @@ let listen (spec: string): unit -> System.IO.Stream =
         let port = Int32.Parse(args.[2])
         let listener = new TcpListener(addr, port)
         listener.Start()
-        fun () -> listener.AcceptTcpClient().GetStream() |> System.IO.BufferedStream :> System.IO.Stream
+        fun () -> listener.AcceptTcpClient().GetStream() |> System.IO.BufferedStream :> _
     | "netpipe" ->
         fun () ->
             let pipe = System.IO.Pipes.NamedPipeServerStream(args.[1])
             pipe.WaitForConnection()
-            pipe :> System.IO.Stream
+            pipe :> _
     | x -> sprintf "unsupported dial protocol: %s" args.[0] |> failwith
 
 let listenAndServe (dialString: string) (attachHandler: string -> string -> Result<Node, string>) =
