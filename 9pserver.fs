@@ -249,7 +249,7 @@ let listen (spec: string): unit -> System.IO.Stream =
         let port = Int32.Parse(args.[2])
         let listener = new TcpListener(addr, port)
         listener.Start()
-        fun () -> listener.AcceptTcpClient().GetStream() :> System.IO.Stream
+        fun () -> listener.AcceptTcpClient().GetStream() |> System.IO.BufferedStream :> System.IO.Stream
     | "netpipe" ->
         fun () ->
             let pipe = System.IO.Pipes.NamedPipeServerStream(args.[1])
