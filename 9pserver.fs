@@ -62,8 +62,10 @@ type State =
     // XXX: not sure if this makes sense as the record itself is immutable
     interface IDisposable with
         member s.Dispose() =
+            let bs = s.Reader.BaseStream
             s.Reader.Dispose()
             s.Writer.Dispose()
+            bs.Dispose()
 
 type TestingDirectory(name: string, entries: Node seq) =
     interface IDirectory with
@@ -231,8 +233,7 @@ let rec serve state =
         serve { state with Session = nsession }
     | Error e ->
         eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
-        state.Reader.Dispose()
-        state.Writer.Dispose()
+        (state :> IDisposable).Dispose()
 
 let rec listen_ (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
     getClientStream()
