@@ -227,6 +227,7 @@ let rec serve state =
             P2000.tryWriteMsg state.Writer tag rmsg
             |> Result.map (fun _ -> nsession)
         )
+    state.Writer.BaseStream.Flush()
 
     match r with
     | Ok nsession ->
