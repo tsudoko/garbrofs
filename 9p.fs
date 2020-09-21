@@ -76,18 +76,23 @@ type MsgType =
     | Twstat   = 126uy
     | Rwstat   = 127uy
 
+[<Struct>]
 type Qid =
     { Type: FileType
       Ver: uint32
       Path: uint64 }
 
-type Stat(bytes: byte []) =
+module private Stat =
+    [<Literal>]
     let stringOffset = 41
+
+[<Struct>]
+type Stat(bytes: byte []) =
 
     member inline st.AsSpan(from, len) = ReadOnlySpan<byte>(st.Bytes, from, len)
 
     member private st.nthString n =
-        st.nthString_ n stringOffset
+        st.nthString_ n Stat.stringOffset
     member private st.nthString_ n offset =
         match n with
         | 0 ->
