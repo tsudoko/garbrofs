@@ -5,24 +5,14 @@ open System.Collections.Immutable
 open NineP
 open NineP.Server
 
-let private pathCounter = MailboxProcessor<AsyncReplyChannel<uint64>>.Start(fun inbox ->
-    let rec run maxpath = async {
-        let! chan = inbox.Receive()
-        chan.Reply maxpath
-        return! run (maxpath+1UL)
-    }
-    run 0UL
-)
-pathCounter.Error.Add(fun x -> raise x)
-
-type File(arc: GameRes.ArcFile, entry: GameRes.Entry, ?name: string) =
+type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: string) =
     let entrySize =
         match entry with
         | :? GameRes.PackedEntry as entry -> entry.UnpackedSize
         | _ -> entry.Size
 
     let stat = Stat(
-        qid = { Type = FileType.File; Ver = 0u; Path = pathCounter.PostAndReply(fun chan -> chan) },
+        qid = { Type = FileType.File; Ver = 0u; Path = qidPath },
         mode = 0o444u,
         atime = 0u,
         mtime = 0u,
@@ -37,9 +27,9 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry, ?name: string) =
             Ok (arc.OpenSeekableEntry(entry))
 
 type Directory (stat: Stat, entries: Map<string, Node>) =
-    new(entries: Map<string, Node>, name: string) =
+    new(entries: Map<string, Node>, name: string, qidPath: uint64) =
         Directory(Stat(
-            qid = { Type = FileType.Dir; Ver = 0u; Path = pathCounter.PostAndReply(fun chan -> chan) },
+            qid = { Type = FileType.Dir; Ver = 0u; Path = qidPath },
             mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
             atime = 0u,
             mtime = 0u,
@@ -63,6 +53,12 @@ type Directory (stat: Stat, entries: Map<string, Node>) =
 
 let private pathSeparators = [|'/'; '\\'|]
 
+module TreeState =
+    let map f (x, nextDirId) =
+        (f x, nextDirId)
+    let getTree (x, nextDirId) =
+        x
+
 let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
     | true -> "hierarchical"
@@ -71,10 +67,11 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
     | true ->
         arc.Dir
-        |> Seq.fold (fun (tree: Directory) entry ->
+        |> Seq.indexed
+        |> Seq.fold (fun (tree: Directory, nextDirId) (i, entry) ->
             let s = entry.Name.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries)
             s.AsSpan(0, s.Length-1).ToArray() // FIXME: unneeded copy
-            |> Array.fold (fun (parent: Directory :: hier) pathElem ->
+            |> Array.fold (fun (parent: Directory :: hier, nextDirId) pathElem ->
                 parent.mapEntries
                 |> Map.tryFind pathElem
                 // this is dumb
@@ -82,20 +79,22 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
                     match e with
                     | Directory dd ->
                         match dd with
-                        | :? Directory as d -> Some d
+                        | :? Directory as d -> Some (d, nextDirId)
                         | _ -> None
                     | _ -> None)
-                |> Option.defaultWith (fun () -> Directory(Map.empty, pathElem))
-                |> fun x -> x :: parent :: hier
-            ) (List.singleton tree)
-            |> fun (d :: ds) -> d.addEntry(File(arc, entry, s |> Array.last) :> IFile |> Node.File) :: ds
-            |> List.reduce (fun child parent -> parent.addEntry(child :> IDirectory |> Node.Directory))
-        ) (Directory(Map.empty, "/"))
+                |> Option.defaultWith (fun () -> Directory(Map.empty, pathElem, nextDirId), nextDirId+1UL)
+                |> TreeState.map (fun x -> x :: parent :: hier)
+            ) (List.singleton tree, nextDirId)
+            |> TreeState.map (fun (d :: ds) -> d.addEntry(File(arc, entry, uint64 i, s |> Array.last) :> IFile |> Node.File) :: ds)
+            |> (TreeState.map << List.reduce) (fun child parent -> parent.addEntry(child :> IDirectory |> Node.Directory))
+        ) (Directory(Map.empty, "/", UInt64.MaxValue), 1UL<<<63)
+        |> TreeState.getTree
     | false ->
         arc.Dir
-        |> Seq.map (fun entry -> entry.Name, File(arc, entry) :> IFile |> Node.File)
+        |> Seq.indexed
+        |> Seq.map (fun (i, entry) -> entry.Name, File(arc, entry, uint64 i) :> IFile |> Node.File)
         |> Map.ofSeq
-        |> fun entries -> Directory(entries, "/")
+        |> fun entries -> Directory(entries, "/", UInt64.MaxValue)
     :> IDirectory
     |> Node.Directory
 
