@@ -59,6 +59,36 @@ module TreeState =
     let getTree (x, nextDirId) =
         x
 
+let deflatten<'a> (makeFile: string -> 'a -> uint64 -> File)
+                  //(makeDirectory: string -> seq<Node> -> uint64 -> Directory)
+                  (makeDirectory: string -> Map<string, Node> -> uint64 -> Directory)
+                  (getPath: 'a -> string)
+                  (pathSeparators: char [])
+                  (entries: seq<'a>) =
+    entries
+    |> Seq.indexed
+    |> Seq.fold (fun (tree: Directory, nextDirId) (i, entry) ->
+        let s = (getPath entry).Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries)
+        s.AsSpan(0, s.Length-1).ToArray() // FIXME: unneeded copy
+        |> Array.fold (fun (parent: Directory :: hier, nextDirId) pathElem ->
+            parent.mapEntries
+            |> Map.tryFind pathElem
+            // this is dumb
+            |> Option.bind (fun e ->
+                match e with
+                | Directory dd ->
+                    match dd with
+                    | :? Directory as d -> Some (d, nextDirId)
+                    | _ -> None
+                | _ -> None)
+            |> Option.defaultWith (fun () -> (makeDirectory pathElem Map.empty nextDirId), nextDirId+1UL)
+            |> TreeState.map (fun x -> x :: parent :: hier)
+        ) (List.singleton tree, nextDirId)
+        |> TreeState.map (fun (d :: ds) -> d.addEntry(makeFile (s |> Array.last) entry (uint64 i) :> IFile |> Node.File) :: ds)
+        |> (TreeState.map << List.reduce) (fun child parent -> parent.addEntry(child :> IDirectory |> Node.Directory))
+    ) ((makeDirectory "/" Map.empty UInt64.MaxValue), 0UL)
+    |> TreeState.getTree
+
 let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
     | true -> "hierarchical"
@@ -67,28 +97,11 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
     | true ->
         arc.Dir
-        |> Seq.indexed
-        |> Seq.fold (fun (tree: Directory, nextDirId) (i, entry) ->
-            let s = entry.Name.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries)
-            s.AsSpan(0, s.Length-1).ToArray() // FIXME: unneeded copy
-            |> Array.fold (fun (parent: Directory :: hier, nextDirId) pathElem ->
-                parent.mapEntries
-                |> Map.tryFind pathElem
-                // this is dumb
-                |> Option.bind (fun e ->
-                    match e with
-                    | Directory dd ->
-                        match dd with
-                        | :? Directory as d -> Some (d, nextDirId)
-                        | _ -> None
-                    | _ -> None)
-                |> Option.defaultWith (fun () -> Directory(Map.empty, pathElem, nextDirId), nextDirId+1UL)
-                |> TreeState.map (fun x -> x :: parent :: hier)
-            ) (List.singleton tree, nextDirId)
-            |> TreeState.map (fun (d :: ds) -> d.addEntry(File(arc, entry, uint64 i, s |> Array.last) :> IFile |> Node.File) :: ds)
-            |> (TreeState.map << List.reduce) (fun child parent -> parent.addEntry(child :> IDirectory |> Node.Directory))
-        ) (Directory(Map.empty, "/", UInt64.MaxValue), 1UL<<<63)
-        |> TreeState.getTree
+        |> deflatten
+            (fun name entry qidPath -> File(arc, entry, qidPath, name))
+            (fun name entries qidPath -> Directory(entries, name, (1UL<<<63)+qidPath))
+            (fun entry -> entry.Name)
+            pathSeparators
     | false ->
         arc.Dir
         |> Seq.indexed
