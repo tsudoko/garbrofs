@@ -10,7 +10,7 @@ let mutable chatty = false
 
 type IDirectory =
     abstract member Stat: Stat
-    abstract member Entries: Node seq
+    abstract member Entries: IReadOnlyDictionary<string, Node>
 and IFile =
     abstract member Stat: Stat
     abstract member Open: unit -> Result<System.IO.Stream, string>
@@ -67,7 +67,7 @@ type State =
             s.Writer.Dispose()
             bs.Dispose()
 
-type TestingDirectory(name: string, entries: Node seq) =
+type TestingDirectory(name: string, entries: IReadOnlyDictionary<string, Node>) =
     interface IDirectory with
         member d.Stat =
             Stat(qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
@@ -128,9 +128,9 @@ let handle attachHandler session tag msg =
                 match wnames |> Array.tryHead with
                 | None -> dirs |> List.rev
                 | Some n ->
-                    match d.Entries |> Seq.tryFind (fun e -> e.Stat.Name = n) with
-                    | None -> dirs |> List.rev
-                    | Some e -> doWalk_ e (wnames |> Array.tail) (e :: dirs)
+                    match d.Entries.TryGetValue n with
+                    | (true, e) -> doWalk_ e (wnames |> Array.tail) (e :: dirs)
+                    | _ -> dirs |> List.rev
         let doWalk (root: Node) wnames =
             doWalk_ root wnames List.empty
 
@@ -187,7 +187,7 @@ let handle attachHandler session tag msg =
 
                 let prepared, remaining =
                     entries
-                    |> Option.orElse (d.Entries |> Seq.map (fun n -> n.Stat) |> Seq.toList |> Some)
+                    |> Option.orElse (d.Entries.Values |> Seq.map (fun n -> n.Stat) |> Seq.toList |> Some)
                     |> Option.map (fun e -> fittingEntries count e)
                     |> Option.get
                 // maybe TODO: store length of sent responses and check if requested offset matches total sent length (the spec disallows non-sequential reads of directories)
@@ -270,14 +270,20 @@ let main (args: string []) =
         1
     else
 
-    let d4 = TestingDirectory("dir4", Seq.empty)
+    let toMap (e: Node list) =
+        e
+        |> List.map (fun x -> x.Stat.Name, x)
+        |> Map.ofList
+        :> IReadOnlyDictionary<_, _>
+
+    let d4 = TestingDirectory("dir4", Map.empty<string, Node> :> IReadOnlyDictionary<_, _>)
     let fa = TestingFile("a", "awoo"B)
     let fb = TestingFile("b", "AWOO"B)
     let fc = TestingProxyFile("c.fs", "9p.fs")
     let fd = TestingProxyFile("d.fs", "main.fs")
-    let d3 = TestingDirectory("dir3", [Directory d4; File fd] :> Node seq)
-    let d1 = TestingDirectory("dir1", [Directory d3; File fc] :> Node seq)
-    let d2 = TestingDirectory("dir2", Seq.empty)
-    let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] :> Node seq)
+    let d3 = TestingDirectory("dir3", [Directory d4; File fd] |> toMap)
+    let d1 = TestingDirectory("dir1", [Directory d3; File fc] |> toMap)
+    let d2 = TestingDirectory("dir2", Map.empty<string, Node> :> IReadOnlyDictionary<_, _>)
+    let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] |> toMap)
 
     listenAndServe args.[0] (fun _ _ -> Ok (Directory root))

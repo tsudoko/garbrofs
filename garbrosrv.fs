@@ -1,5 +1,6 @@
 module GARbroFS
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 
 open NineP
@@ -38,7 +39,6 @@ type Directory (stat: Stat, entries: Map<string, Node>) =
     member d.addEntry (e: Node) =
         Directory(stat, entries.Add(e.Stat.Name, e))
 
-    // TODO: make default?
     member d.mapEntries =
         entries
 
@@ -47,9 +47,7 @@ type Directory (stat: Stat, entries: Map<string, Node>) =
             stat
 
         member d.Entries =
-            entries
-            |> Map.toSeq
-            |> Seq.map (fun (_, v) -> v)
+            upcast entries
 
 let private pathSeparators = [|'/'; '\\'|]
 
