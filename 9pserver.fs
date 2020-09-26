@@ -1,5 +1,6 @@
 module NineP.Server
 open System
+open System.IO
 open System.Collections.Generic
 open System.Net
 open System.Net.Sockets
@@ -7,6 +8,8 @@ open System.Net.Sockets
 open NineP
 
 let mutable chatty = false
+
+let BufMsize = 8192u
 
 type IDirectory =
     abstract member Stat: Stat
@@ -47,25 +50,32 @@ type NodeWithState =
         | Directory d -> SDirectory (d, None)
 
 type Session = { Msize: uint32; Fids: Map<uint32, NodeWithState> }
-let EmptySession = { Msize = 8192u; Fids = Map.empty }
+let EmptySession = { Msize = BufMsize; Fids = Map.empty }
 
 type State =
-    { Reader: NinePReader
-      Writer: NinePWriter
+    { ClientStream: Stream
+      Reader: NinePReader
+      Buf: MemoryStream
+      BufWriter: NinePWriter
       AttachHandler: string -> string -> Result<Node, string>
       Session: Session } with
     static member create (ah) (s) =
-        { Reader = new NinePReader(s)
-          Writer = new NinePWriter(s)
+        let buf =
+              Checked.int32 BufMsize
+              |> Array.zeroCreate
+              |> MemoryStream
+        { ClientStream = s
+          Reader = new NinePReader(s)
+          Buf = buf
+          BufWriter = new NinePWriter(buf)
           AttachHandler = ah
           Session = EmptySession }
     // XXX: not sure if this makes sense as the record itself is immutable
     interface IDisposable with
         member s.Dispose() =
-            let bs = s.Reader.BaseStream
             s.Reader.Dispose()
-            s.Writer.Dispose()
-            bs.Dispose()
+            s.BufWriter.Dispose()
+            s.ClientStream.Dispose()
 
 type TestingDirectory(name: string, entries: IReadOnlyDictionary<string, Node>) =
     interface IDirectory with
@@ -103,7 +113,7 @@ let handle attachHandler session tag msg =
     match msg with
     | Tversion (msize, version) ->
         if version.StartsWith("9P2000") then
-            // TODO: clamp msize when received msize > default msize? it's not like we care that much though as long as it's not something ridiculous
+            // TODO: clamp msize when received msize > default msize
             { EmptySession with Msize = msize }, Rversion (msize, "9P2000")
         else
             EmptySession, Rversion (msize, "unknown")
@@ -220,14 +230,24 @@ let handle attachHandler session tag msg =
         session, Rerror <| sprintf "%A unimplemented" x
 
 let rec serve state =
+    let writeFromBuffer (bufStream: MemoryStream) stream =
+        bufStream.SetLength bufStream.Position
+        bufStream.Position <- 0L
+        bufStream.CopyTo stream
+        bufStream.SetLength (int64 bufStream.Capacity)
+        bufStream.Position <- 0L
+    let tryWriteFromBuffer bufStream stream =
+        try
+            Ok (writeFromBuffer bufStream stream)
+        with :? System.IO.IOException as e -> Error e
     let r =
         P2000.tryReadMsg state.Reader state.Session.Msize
         |> Result.bind (fun (tag, tmsg) ->
             let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
-            P2000.tryWriteMsg state.Writer tag rmsg
+            P2000.tryWriteMsg state.BufWriter tag rmsg
+            |> Result.bind (fun _ -> tryWriteFromBuffer state.Buf state.ClientStream)
             |> Result.map (fun _ -> nsession)
         )
-    state.Writer.BaseStream.Flush()
 
     match r with
     | Ok nsession ->
@@ -251,7 +271,7 @@ let listen (spec: string): unit -> System.IO.Stream =
         let port = Int32.Parse(args.[2])
         let listener = new TcpListener(addr, port)
         listener.Start()
-        fun () -> listener.AcceptTcpClient().GetStream() |> System.IO.BufferedStream :> _
+        fun () -> listener.AcceptTcpClient().GetStream() :> _
     | "netpipe" ->
         fun () ->
             let pipe = System.IO.Pipes.NamedPipeServerStream(args.[1])
