@@ -263,7 +263,7 @@ let rec listen_ (attachHandler: string -> string -> Result<Node, string>) (getCl
     listen_ attachHandler getClientStream
 
 // TODO: move to another module to avoid name clashes
-let listen (spec: string): unit -> System.IO.Stream =
+let listen (spec: string): (unit -> System.IO.Stream) * string =
     let args = spec.Split('!')
     match args.[0] with
     | "tcp" ->
@@ -271,17 +271,21 @@ let listen (spec: string): unit -> System.IO.Stream =
         let port = Int32.Parse(args.[2])
         let listener = new TcpListener(addr, port)
         listener.Start()
-        fun () -> listener.AcceptTcpClient().GetStream() :> _
+        let actualAddr = listener.LocalEndpoint :?> IPEndPoint
+        (fun () -> listener.AcceptTcpClient().GetStream() :> _), (sprintf "%O:%d" actualAddr.Address actualAddr.Port)
     | "netpipe" ->
-        fun () ->
-            let pipe = System.IO.Pipes.NamedPipeServerStream(args.[1])
+        (fun () ->
+            let pipe = new System.IO.Pipes.NamedPipeServerStream(args.[1])
             pipe.WaitForConnection()
-            pipe :> _
+            pipe :> _), (sprintf "<%s>" spec) // https://github.com/dotnet/runtime/issues/28979
+        // TODO: make sure the pipe is cleaned up after ^Cing
     | x -> sprintf "unsupported dial protocol: %s" args.[0] |> failwith
 
 let listenAndServe (dialString: string) (attachHandler: string -> string -> Result<Node, string>) =
-    printfn "listening @ %s" dialString // TODO: don't print this until we actually create the listening socket
     listen dialString
+    ||> fun x addr ->
+        printfn "listening @ %s" addr
+        x
     |> listen_ attachHandler
 
 let main (args: string []) =
