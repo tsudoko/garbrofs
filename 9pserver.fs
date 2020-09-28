@@ -230,11 +230,12 @@ let handle attachHandler session tag msg =
     | x ->
         session, Rerror <| sprintf "%A unimplemented" x
 
-let rec serve state =
+let rec serve state = async {
     let writeBuffer (bufStream: MemoryStream) stream =
         bufStream.SetLength bufStream.Position
         bufStream.Position <- 0L
-        bufStream.CopyTo stream
+        // TODO: make async
+        do bufStream.CopyTo stream
         bufStream.SetLength (int64 bufStream.Capacity)
         bufStream.Position <- 0L
     let tryWriteBuffer bufStream stream =
@@ -242,6 +243,7 @@ let rec serve state =
             Ok (writeBuffer bufStream stream)
         with :? System.IO.IOException as e -> Error e
     let r =
+        // TODO: make async, it's usually the most blocking part of this file
         P2000.tryReadMsg state.Reader state.Session.Msize
         |> Result.bind (fun (tag, tmsg) ->
             let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
@@ -252,15 +254,17 @@ let rec serve state =
 
     match r with
     | Ok nsession ->
-        serve { state with Session = nsession }
+        return! serve { state with Session = nsession }
     | Error e ->
         eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
         (state :> IDisposable).Dispose()
+}
 
 let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
     getClientStream()
     |> State.create attachHandler
-    |> serve // TODO: don't block
+    |> serve
+    |> Async.Start
     listenLoop attachHandler getClientStream
 
 let listen (spec: string): (unit -> System.IO.Stream) * string =
