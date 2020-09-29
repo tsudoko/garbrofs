@@ -291,27 +291,3 @@ let listenAndServe (dialString: string) (attachHandler: string -> string -> Resu
         printfn "listening @ %s" addr
         x
     |> listen_ attachHandler
-
-let main (args: string []) =
-    if args.Length < 1 then
-        eprintfn "usage: %s tcp!listenaddr!port" (System.Environment.GetCommandLineArgs().[0])
-        1
-    else
-
-    let toMap (e: Node list) =
-        e
-        |> List.map (fun x -> x.Stat.Name, x)
-        |> Map.ofList
-        :> IReadOnlyDictionary<_, _>
-
-    let d4 = TestingDirectory("dir4", Map.empty<string, Node> :> IReadOnlyDictionary<_, _>)
-    let fa = TestingFile("a", "awoo"B)
-    let fb = TestingFile("b", "AWOO"B)
-    let fc = TestingProxyFile("c.fs", "9p.fs")
-    let fd = TestingProxyFile("d.fs", "main.fs")
-    let d3 = TestingDirectory("dir3", [Directory d4; File fd] |> toMap)
-    let d1 = TestingDirectory("dir1", [Directory d3; File fc] |> toMap)
-    let d2 = TestingDirectory("dir2", Map.empty<string, Node> :> IReadOnlyDictionary<_, _>)
-    let root = TestingDirectory("/", [Directory d1; Directory d2; File fa; File fb] |> toMap)
-
-    listenAndServe args.[0] (fun _ _ -> Ok (Directory root))
