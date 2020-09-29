@@ -231,33 +231,32 @@ let handle attachHandler session tag msg =
         session, Rerror <| sprintf "%A unimplemented" x
 
 let rec serve state = async {
-    let writeBuffer (bufStream: MemoryStream) stream =
+    let writeBuffer (bufStream: MemoryStream) stream = async {
         bufStream.SetLength bufStream.Position
         bufStream.Position <- 0L
-        // TODO: make async
-        do bufStream.CopyTo stream
+        do! bufStream.CopyToAsync stream |> Async.AwaitTask
         bufStream.SetLength (int64 bufStream.Capacity)
         bufStream.Position <- 0L
-    let tryWriteBuffer bufStream stream =
-        try
-            Ok (writeBuffer bufStream stream)
-        with :? System.IO.IOException as e -> Error e
+    }
+
     let r =
         // TODO: make async, it's usually the most blocking part of this file
-        P2000.tryReadMsg state.Reader state.Session.Msize
-        |> Result.bind (fun (tag, tmsg) ->
+        match P2000.tryReadMsg state.Reader state.Session.Msize with
+        | Error e -> async { return Choice2Of2 (e :> exn) }
+        | Ok (tag, tmsg) ->
             let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
-            P2000.tryWriteMsg state.BufWriter tag rmsg
-            |> Result.bind (fun _ -> tryWriteBuffer state.Buf state.ClientStream)
-            |> Result.map (fun _ -> nsession)
-        )
+            P2000.writeMsg state.BufWriter tag rmsg
+            async {
+                do! writeBuffer state.Buf state.ClientStream
+                return nsession
+            } |> Async.Catch
 
-    match r with
-    | Ok nsession ->
-        return! serve { state with Session = nsession }
-    | Error e ->
+    match! r with
+    | Choice2Of2 e ->
         eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
         (state :> IDisposable).Dispose()
+    | Choice1Of2 nsession ->
+        return! serve { state with Session = nsession }
 }
 
 let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
