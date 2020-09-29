@@ -12,13 +12,13 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: st
         | :? GameRes.PackedEntry as entry -> entry.UnpackedSize
         | _ -> entry.Size
 
-    let stat = Stat(
-        qid = { Type = FileType.File; Ver = 0u; Path = qidPath },
-        mode = 0o444u,
-        atime = 0u,
-        mtime = 0u,
-        length = uint64 entrySize,
-        name = defaultArg name entry.Name)
+    let stat =
+        Stat(qid = { Type = FileType.File; Ver = 0u; Path = qidPath },
+            mode = 0o444u,
+            atime = 0u,
+            mtime = 0u,
+            length = uint64 entrySize,
+            name = defaultArg name entry.Name)
 
     interface IFile with
         member f.Stat =
@@ -29,12 +29,13 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: st
 
 type Directory (stat: Stat, entries: Map<string, Node>) =
     new(entries: Map<string, Node>, name: string, qidPath: uint64) =
-        Directory(Stat(
-            qid = { Type = FileType.Dir; Ver = 0u; Path = qidPath },
-            mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
-            atime = 0u,
-            mtime = 0u,
-            name = name), entries)
+        Directory(
+            Stat(qid = { Type = FileType.Dir; Ver = 0u; Path = qidPath },
+                mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
+                atime = 0u,
+                mtime = 0u,
+                name = name),
+            entries)
 
     member d.addEntry (e: Node) =
         Directory(stat, entries.Add(e.Stat.Name, e))
@@ -120,7 +121,7 @@ let loadArchive path =
                     match impl.TryOpen arcview with
                     | null -> openArc' errors arcview (impls |> Seq.tail)
                     | arc -> impl.IsHierarchic, arc
-                with :? Exception as e ->
+                with e ->
                     let emsg = sprintf "%A: %s" impl e.Message
                     openArc' (emsg :: errors) arcview (impls |> Seq.tail)
             | None ->
@@ -128,7 +129,7 @@ let loadArchive path =
                 | [] -> failwithf "no handlers found for %s" path
                 | x ->
                     (sprintf "no handlers found for %s, some handlers returned errors:" path) :: x
-                    :> seq<'a>
+                    :> seq<_>
                     |> String.concat "\n"
                     |> failwith
         openArc' List.empty arcview impls
@@ -142,7 +143,7 @@ let loadArchive path =
         |> openArc av
         ||> treeFromArc
         |> Ok
-    with :? Exception as e -> Error e.Message
+    with e -> Error e.Message
 
 [<EntryPoint>]
 let main (args: string []) =

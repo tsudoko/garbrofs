@@ -60,10 +60,7 @@ type State =
       AttachHandler: string -> string -> Result<Node, string>
       Session: Session } with
     static member create (ah) (s) =
-        let buf =
-              Checked.int32 BufMsize
-              |> Array.zeroCreate
-              |> MemoryStream
+        let buf = new MemoryStream(Checked.int32 BufMsize |> Array.zeroCreate)
         { ClientStream = s
           Reader = new NinePReader(s)
           Buf = buf
@@ -216,7 +213,7 @@ let handle attachHandler session tag msg =
                         session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
                     with
                     | :? OverflowException -> session, Rerror Es64off
-                    | :? Exception as e -> session, Rerror e.Message
+                    | e -> session, Rerror e.Message
     | Tclunk fid ->
         match session.Fids.TryFind(fid) with
         | None -> session, Rerror Enofid
