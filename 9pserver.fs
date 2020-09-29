@@ -231,22 +231,22 @@ let handle attachHandler session tag msg =
         session, Rerror <| sprintf "%A unimplemented" x
 
 let rec serve state =
-    let writeFromBuffer (bufStream: MemoryStream) stream =
+    let writeBuffer (bufStream: MemoryStream) stream =
         bufStream.SetLength bufStream.Position
         bufStream.Position <- 0L
         bufStream.CopyTo stream
         bufStream.SetLength (int64 bufStream.Capacity)
         bufStream.Position <- 0L
-    let tryWriteFromBuffer bufStream stream =
+    let tryWriteBuffer bufStream stream =
         try
-            Ok (writeFromBuffer bufStream stream)
+            Ok (writeBuffer bufStream stream)
         with :? System.IO.IOException as e -> Error e
     let r =
         P2000.tryReadMsg state.Reader state.Session.Msize
         |> Result.bind (fun (tag, tmsg) ->
             let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
             P2000.tryWriteMsg state.BufWriter tag rmsg
-            |> Result.bind (fun _ -> tryWriteFromBuffer state.Buf state.ClientStream)
+            |> Result.bind (fun _ -> tryWriteBuffer state.Buf state.ClientStream)
             |> Result.map (fun _ -> nsession)
         )
 
@@ -257,13 +257,12 @@ let rec serve state =
         eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
         (state :> IDisposable).Dispose()
 
-let rec listen_ (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
+let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
     getClientStream()
     |> State.create attachHandler
     |> serve // TODO: don't block
-    listen_ attachHandler getClientStream
+    listenLoop attachHandler getClientStream
 
-// TODO: move to another module to avoid name clashes
 let listen (spec: string): (unit -> System.IO.Stream) * string =
     let args = spec.Split('!')
     match args.[0] with
@@ -287,4 +286,4 @@ let listenAndServe (dialString: string) (attachHandler: string -> string -> Resu
     ||> fun x addr ->
         printfn "listening @ %s" addr
         x
-    |> listen_ attachHandler
+    |> listenLoop attachHandler
