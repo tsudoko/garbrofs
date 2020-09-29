@@ -24,6 +24,8 @@ module Errstr =
     let Eperm = "permission denied"
     [<Literal>]
     let Erdonly = "read only file system"
+    [<Literal>]
+    let Es64off = "files larger than 8 EiB not supported"
 
 
 [<System.Flags>]

@@ -207,12 +207,16 @@ let handle attachHandler session tag msg =
                 | None ->
                     session, Rerror Enotopen
                 | Some s ->
-                    // XXX: return error on overflow
-                    if s.Position <> Checked.int64 offset then
-                        s.Position <- Checked.int64 offset
-                    let buf = Array.zeroCreate (int count)
-                    let nread = s.Read(buf, 0, (int count))
-                    session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
+                    try
+                        let soffset = Checked.int64 offset
+                        if s.Position <> soffset then
+                            s.Position <- soffset
+                        let buf = Array.zeroCreate (int count)
+                        let nread = s.Read(buf, 0, (int count))
+                        session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
+                    with
+                    | :? OverflowException -> session, Rerror Es64off
+                    | :? Exception as e -> session, Rerror e.Message
     | Tclunk fid ->
         match session.Fids.TryFind(fid) with
         | None -> session, Rerror Enofid
