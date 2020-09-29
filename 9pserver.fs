@@ -259,14 +259,16 @@ let rec serve state = async {
         return! serve { state with Session = nsession }
 }
 
-let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: unit -> System.IO.Stream) =
-    getClientStream()
+let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: Async<System.IO.Stream>) = async {
+    let! stream = getClientStream
+    stream
     |> State.create attachHandler
     |> serve
     |> Async.Start
-    listenLoop attachHandler getClientStream
+    return! listenLoop attachHandler getClientStream
+}
 
-let listen (spec: string): (unit -> System.IO.Stream) * string =
+let listen (spec: string): Async<System.IO.Stream> * string =
     let args = spec.Split('!')
     match args.[0] with
     | "tcp" ->
@@ -275,12 +277,16 @@ let listen (spec: string): (unit -> System.IO.Stream) * string =
         let listener = new TcpListener(addr, port)
         listener.Start()
         let actualAddr = listener.LocalEndpoint :?> IPEndPoint
-        (fun () -> listener.AcceptTcpClient().GetStream() :> _), (sprintf "%O:%d" actualAddr.Address actualAddr.Port)
+        async {
+            let! client = listener.AcceptTcpClientAsync() |> Async.AwaitTask
+            return client.GetStream() :> _
+        }, (sprintf "%O:%d" actualAddr.Address actualAddr.Port)
     | "netpipe" ->
-        (fun () ->
+        async {
             let pipe = new System.IO.Pipes.NamedPipeServerStream(args.[1])
-            pipe.WaitForConnection()
-            pipe :> _), (sprintf "<%s>" spec) // https://github.com/dotnet/runtime/issues/28979
+            do! pipe.WaitForConnectionAsync() |> Async.AwaitTask
+            return pipe :> _
+        }, (sprintf "<%s>" spec) // https://github.com/dotnet/runtime/issues/28979
         // TODO: make sure the pipe is cleaned up after ^Cing
     | x -> sprintf "unsupported dial protocol: %s" args.[0] |> failwith
 
@@ -290,3 +296,4 @@ let listenAndServe (dialString: string) (attachHandler: string -> string -> Resu
         printfn "listening @ %s" addr
         x
     |> listenLoop attachHandler
+    |> Async.RunSynchronously
