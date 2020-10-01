@@ -5,6 +5,7 @@ open System.Collections.Immutable
 
 open NineP
 open NineP.Server
+open NineP.Util
 
 type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: string) =
     let entrySize =
@@ -27,8 +28,8 @@ type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: st
         member f.Open() =
             Ok (arc.OpenSeekableEntry(entry))
 
-type Directory (stat: Stat, entries: Map<string, Node>) =
-    new(entries: Map<string, Node>, name: string, qidPath: uint64) =
+type Directory (stat: Stat, entries: IReadOnlyDictionary<string, Node>) =
+    new(entries: IReadOnlyDictionary<string, Node>, name: string, qidPath: uint64) =
         Directory(
             Stat(qid = { Type = FileType.Dir; Ver = 0u; Path = qidPath },
                 mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
@@ -37,56 +38,14 @@ type Directory (stat: Stat, entries: Map<string, Node>) =
                 name = name),
             entries)
 
-    member d.addEntry (e: Node) =
-        Directory(stat, entries.Add(e.Stat.Name, e))
-
-    member d.mapEntries =
-        entries
-
     interface IDirectory with
         member f.Stat =
             stat
 
         member d.Entries =
-            upcast entries
+            entries
 
 let private pathSeparators = [|'/'; '\\'|]
-
-module TreeState =
-    let map f (x, nextDirId) =
-        (f x, nextDirId)
-    let getTree (x, nextDirId) =
-        x
-
-let deflatten<'a> (makeFile: string -> 'a -> uint64 -> File)
-                  //(makeDirectory: string -> seq<Node> -> uint64 -> Directory)
-                  (makeDirectory: string -> Map<string, Node> -> uint64 -> Directory)
-                  (getPath: 'a -> string)
-                  (pathSeparators: char [])
-                  (entries: seq<'a>) =
-    entries
-    |> Seq.indexed
-    |> Seq.fold (fun (tree: Directory, nextDirId) (i, entry) ->
-        let s = (getPath entry).Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries)
-        s.AsSpan(0, s.Length-1).ToArray() // FIXME: unneeded copy
-        |> Array.fold (fun (parent: Directory :: hier, nextDirId) pathElem ->
-            parent.mapEntries
-            |> Map.tryFind pathElem
-            // this is dumb
-            |> Option.bind (fun e ->
-                match e with
-                | Directory dd ->
-                    match dd with
-                    | :? Directory as d -> Some (d, nextDirId)
-                    | _ -> None
-                | _ -> None)
-            |> Option.defaultWith (fun () -> (makeDirectory pathElem Map.empty nextDirId), nextDirId+1UL)
-            |> TreeState.map (fun x -> x :: parent :: hier)
-        ) (List.singleton tree, nextDirId)
-        |> TreeState.map (fun (d :: ds) -> d.addEntry(makeFile (s |> Array.last) entry (uint64 i) :> IFile |> Node.File) :: ds)
-        |> (TreeState.map << List.reduce) (fun child parent -> parent.addEntry(child :> IDirectory |> Node.Directory))
-    ) ((makeDirectory "/" Map.empty UInt64.MaxValue), 0UL)
-    |> TreeState.getTree
 
 let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
@@ -97,15 +56,17 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     | true ->
         arc.Dir
         |> deflatten
-            (fun name entry qidPath -> File(arc, entry, qidPath, name))
-            (fun name entries qidPath -> Directory(entries, name, (1UL<<<63)+qidPath))
+            (fun name entry qidPath -> File(arc, entry, qidPath, name) :> IFile |> Node.File)
+            (fun name entries qidPath -> Directory(entries, name, (1UL<<<63)+qidPath) :> IDirectory |> Node.Directory)
             (fun entry -> entry.Name)
             pathSeparators
+        |> fun entries -> Directory(entries, "/", UInt64.MaxValue)
     | false ->
         arc.Dir
         |> Seq.indexed
         |> Seq.map (fun (i, entry) -> entry.Name, File(arc, entry, uint64 i) :> IFile |> Node.File)
         |> Map.ofSeq
+        :> IReadOnlyDictionary<_, _>
         |> fun entries -> Directory(entries, "/", UInt64.MaxValue)
     :> IDirectory
     |> Node.Directory
