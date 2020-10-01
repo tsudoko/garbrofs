@@ -75,36 +75,6 @@ type State =
             s.BufWriter.Dispose()
             s.ClientStream.Dispose()
 
-type TestingDirectory(name: string, entries: IReadOnlyDictionary<string, Node>) =
-    interface IDirectory with
-        member d.Stat =
-            Stat(qid = { Type = FileType.Dir; Ver = 0u; Path = 0UL },
-                mode = (0o555u ||| ((uint32 FileType.Dir) <<< 24)),
-                name = name)
-
-        member d.Entries =
-            entries
-
-type TestingProxyFile(name: string, path: string) =
-    interface IFile with
-        member f.Stat =
-            Stat(mode = 0o444u,
-                length = uint64 (System.IO.FileInfo(path).Length),
-                name = name)
-
-        member f.Open() =
-            Ok (System.IO.File.OpenRead(path) :> _)
-
-type TestingFile(name: string, contents: byte []) =
-    interface IFile with
-        member f.Stat =
-            Stat(mode = 0o444u,
-                length = uint64 contents.Length,
-                name = name)
-
-        member f.Open() =
-            Ok (new System.IO.MemoryStream(contents) :> _)
-
 let handle attachHandler session tag msg =
     if chatty then
         eprintfn "got %A %d" msg tag
