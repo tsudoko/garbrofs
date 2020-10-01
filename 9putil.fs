@@ -20,9 +20,8 @@ let rec private mapMerge<'file> (f: 'file, path: string list) (map: Map<string, 
 
 let rec private treeOfRecMap makeFile makeDirectory ((entries: Map<string, Node>), curQidPath) k v =
     match v with
-    | Terminator t ->
-        // TODO: pass entry index instead of 0UL
-        entries |> Map.add k (makeFile k t 0UL), curQidPath
+    | Terminator (index, t) ->
+        entries |> Map.add k (makeFile k t (uint64 index)), curQidPath
     | RecMap.Map m ->
         let d, curQidPath' =
             m
@@ -37,7 +36,8 @@ let deflatten<'a> (makeFile: string -> 'a -> uint64 -> Node)
                   (pathSeparators: char [])
                   (entries: seq<'a>) =
     entries
-    |> Seq.map (fun f -> f, (getPath f).Split(pathSeparators) |> List.ofArray)
+    |> Seq.indexed
+    |> Seq.map (fun (index, f) -> (index, f), (getPath f).Split(pathSeparators) |> List.ofArray)
     |> Seq.fold (fun map (f, path) -> map |> mapMerge (f, path)) Map.empty
     |> Map.fold (treeOfRecMap makeFile makeDirectory) (Map.empty, 0UL)
     |> fun (l, _) -> l :> IReadOnlyDictionary<_, _>
