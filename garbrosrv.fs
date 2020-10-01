@@ -45,8 +45,6 @@ type Directory (stat: Stat, entries: IReadOnlyDictionary<string, Node>) =
         member d.Entries =
             entries
 
-let private pathSeparators = [|'/'; '\\'|]
-
 let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
     match isHierarchic with
     | true -> "hierarchical"
@@ -59,7 +57,7 @@ let private treeFromArc (isHierarchic: bool) (arc: GameRes.ArcFile) =
             (fun name entry qidPath -> File(arc, entry, qidPath, name) :> IFile |> Node.File)
             (fun name entries qidPath -> Directory(entries, name, (1UL<<<63)+qidPath) :> IDirectory |> Node.Directory)
             (fun entry -> entry.Name)
-            pathSeparators
+            [|'/'; '\\'|]
         |> fun entries -> Directory(entries, "/", UInt64.MaxValue)
     | false ->
         arc.Dir
