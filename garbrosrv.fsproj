@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="util.fs" />
     <Compile Include="9p.fs" />
     <Compile Include="9pserver.fs" />
     <Compile Include="garbrosrv.fs" />

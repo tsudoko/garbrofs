@@ -183,7 +183,7 @@ type Rmsg =
     | Rerror of ename: string
     | Rwalk of nwqids: Qid []
     | Ropen of qid: Qid * iounit: uint32
-    | Rread of data: byte []
+    | Rread of data: ReadOnlyMemory<byte>
     | Rclunk
     | Rstat of stat: Stat
 
@@ -302,7 +302,7 @@ module P2000 =
             w.Write (uint8 MsgType.Rread)
             w.Write tag
             w.Write (uint32 data.Length)
-            w.Write data
+            w.Write data.Span
         | Rclunk ->
             w.Write (uint32 (4+1+2))
             w.Write (uint8 MsgType.Rclunk)

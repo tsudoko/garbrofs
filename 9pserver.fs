@@ -6,6 +6,7 @@ open System.Net
 open System.Net.Sockets
 
 open NineP
+open Util
 
 let mutable chatty = false
 
@@ -198,7 +199,7 @@ let handle attachHandler session tag msg =
                     |> Option.map (fun e -> fittingEntries count e)
                     |> Option.get
                 // maybe TODO: store length of sent responses and check if requested offset matches total sent length (the spec disallows non-sequential reads of directories)
-                { session with Fids = session.Fids.Add(fid, SDirectory (d, Some remaining)) }, Rread prepared
+                { session with Fids = session.Fids.Add(fid, SDirectory (d, Some remaining)) }, Rread (prepared.AsMemory() |> implicitConv)
             | SFile (f, stream) ->
                 match stream with
                 | None ->
@@ -222,7 +223,7 @@ let handle attachHandler session tag msg =
                         try
                             // TODO: make async
                             let nread = s.Read(buf, 0, (int count))
-                            session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
+                            session, Rread (buf.AsMemory(0, nread) |> implicitConv)
                         with
                         | :? IOException as e -> session, Rerror e.Message
     | Tclunk fid ->
