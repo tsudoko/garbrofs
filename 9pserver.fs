@@ -204,16 +204,27 @@ let handle attachHandler session tag msg =
                 | None ->
                     session, Rerror Enotopen
                 | Some s ->
-                    try
-                        let soffset = Checked.int64 offset
-                        if s.Position <> soffset then
-                            s.Position <- soffset
-                        let buf = Array.zeroCreate (int count)
-                        let nread = s.Read(buf, 0, (int count))
-                        session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
-                    with
-                    | :? OverflowException -> session, Rerror Es64off
-                    | e -> session, Rerror e.Message
+                    let r =
+                        try
+                            let soffset = Checked.int64 offset
+                            if s.Position <> soffset then
+                                s.Position <- soffset
+                            Ok ()
+                        with
+                        | :? OverflowException -> Error Es64off
+                        | :? ArgumentOutOfRangeException as e
+                            when (match s with :? MemoryStream -> true | _ -> false) ->
+                                 Error "this file cannot be read past 2 GiB"
+                    match r with
+                    | Error e -> session, Rerror e
+                    | _ ->
+                        let buf = Array.zeroCreate (int count) // TODO: reuse?
+                        try
+                            // TODO: make async
+                            let nread = s.Read(buf, 0, (int count))
+                            session, Rread (buf.AsSpan(0, nread).ToArray()) // XXX unneeded copy
+                        with
+                        | :? IOException as e -> session, Rerror e.Message
     | Tclunk fid ->
         match session.Fids.TryFind(fid) with
         | None -> session, Rerror Enofid
