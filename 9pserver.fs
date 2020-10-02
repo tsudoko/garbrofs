@@ -55,23 +55,23 @@ let EmptySession = { Msize = BufMsize; Fids = Map.empty }
 
 type State =
     { ClientStream: Stream
-      Reader: NinePReader
       Buf: MemoryStream
+      BufReader: NinePReader
       BufWriter: NinePWriter
       AttachHandler: string -> string -> Result<Node, string>
       Session: Session } with
     static member create (ah) (s) =
-        let buf = new MemoryStream(Checked.int32 BufMsize |> Array.zeroCreate)
+        let buf = new MemoryStream(Checked.int32 BufMsize |> Array.zeroCreate, 0, Checked.int32 BufMsize, true, true)
         { ClientStream = s
-          Reader = new NinePReader(s)
           Buf = buf
+          BufReader = new NinePReader(buf)
           BufWriter = new NinePWriter(buf)
           AttachHandler = ah
           Session = EmptySession }
     // XXX: not sure if this makes sense as the record itself is immutable
     interface IDisposable with
         member s.Dispose() =
-            s.Reader.Dispose()
+            s.BufReader.Dispose()
             s.BufWriter.Dispose()
             s.ClientStream.Dispose()
 
@@ -213,7 +213,15 @@ let handle attachHandler session tag msg =
         session, Rerror <| sprintf "%A unimplemented" x
 
 let rec serve state = async {
-    let writeBuffer (bufStream: MemoryStream) stream = async {
+    let readRaw (buffer: Memory<byte>) stream = async {
+        let! nread = state.ClientStream.ReadAsync(buffer).AsTask() |> Async.AwaitTask
+        if nread = 0 then
+            raise (EndOfStreamException())
+        else if nread < buffer.Length then
+            failwith "incomplete read"
+    }
+
+    let writeRaw (bufStream: MemoryStream) stream = async {
         bufStream.SetLength bufStream.Position
         bufStream.Position <- 0L
         do! bufStream.CopyToAsync stream |> Async.AwaitTask
@@ -221,21 +229,28 @@ let rec serve state = async {
         bufStream.Position <- 0L
     }
 
-    let r =
-        // TODO: make async, it's usually the most blocking part of this file
-        match P2000.tryReadMsg state.Reader state.Session.Msize with
-        | Error e -> async { return Choice2Of2 (e :> exn) }
-        | Ok (tag, tmsg) ->
-            let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
-            P2000.writeMsg state.BufWriter tag rmsg
-            async {
-                do! writeBuffer state.Buf state.ClientStream
-                return nsession
-            } |> Async.Catch
+    let r = async {
+        do! state.ClientStream |> readRaw (Memory<_>(state.Buf.GetBuffer(), 0, 4))
+        let len = state.BufReader.ReadUInt32()
+        // TODO: handle >2G messages? we'd need to do it in chunks as the
+        //       default max .NET object size is ~2G
+        if len >= (1u <<< 31) then
+            failwith "message too large"
+        let slen = int (len &&& uint32 Int32.MaxValue)
+        do! state.ClientStream |> readRaw (Memory<_>(state.Buf.GetBuffer(), 4, slen - 4))
+        state.Buf.Position <- 0L
 
-    match! r with
+        let tag, tmsg = P2000.readMsg state.BufReader state.Session.Msize
+        let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
+        state.Buf.Position <- 0L
+        P2000.writeMsg state.BufWriter tag rmsg
+        do! state.ClientStream |> writeRaw state.Buf
+        return nsession
+    }
+
+    match! r |> Async.Catch with
     | Choice2Of2 e ->
-        eprintfn "[%A] error: %s" state.Reader.BaseStream e.Message
+        eprintfn "[%A] error: %s" state.ClientStream e.Message
         (state :> IDisposable).Dispose()
     | Choice1Of2 nsession ->
         return! serve { state with Session = nsession }
