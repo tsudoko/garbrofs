@@ -9,7 +9,7 @@
     <Compile Include="util.fs" />
     <Compile Include="9p.fs" />
     <Compile Include="9pserver.fs" />
-    <Compile Include="9putil.fs" />
+    <Compile Include="9pserverutil.fs" />
     <Compile Include="garbrosrv.fs" />
     <Reference Include="GameRes">
       <HintPath>./lib/GameRes.dll</HintPath>

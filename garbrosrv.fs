@@ -5,7 +5,7 @@ open System.Collections.Immutable
 
 open NineP
 open NineP.Server
-open NineP.Util
+open NineP.ServerUtil
 
 type File(arc: GameRes.ArcFile, entry: GameRes.Entry, qidPath: uint64, ?name: string) =
     let entrySize =
