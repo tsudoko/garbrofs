@@ -240,20 +240,27 @@ let rec serve state = async {
         do! state.ClientStream |> readRaw (Memory<_>(state.Buf.GetBuffer(), 4, slen - 4))
         state.Buf.Position <- 0L
 
-        let tag, tmsg = P2000.readMsg state.BufReader state.Session.Msize
-        let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
-        state.Buf.Position <- 0L
-        P2000.writeMsg state.BufWriter tag rmsg
-        do! state.ClientStream |> writeRaw state.Buf
-        return nsession
+        return P2000.readMsg state.BufReader state.Session.Msize
     }
 
     match! r |> Async.Catch with
     | Choice2Of2 e ->
         eprintfn "[%A] error: %s" state.ClientStream e.Message
         (state :> IDisposable).Dispose()
-    | Choice1Of2 nsession ->
-        return! serve { state with Session = nsession }
+    | Choice1Of2 (tag, tmsg) ->
+        let nsession, rmsg = handle state.AttachHandler state.Session tag tmsg
+        let r = async {
+            state.Buf.Position <- 0L
+            P2000.writeMsg state.BufWriter tag rmsg
+            do! state.ClientStream |> writeRaw state.Buf
+        }
+
+        match! r |> Async.Catch with
+        | Choice2Of2 e ->
+            eprintfn "[%A] error: %s" state.ClientStream e.Message
+            (state :> IDisposable).Dispose()
+        | Choice1Of2 () ->
+            return! serve { state with Session = nsession }
 }
 
 let rec listenLoop (attachHandler: string -> string -> Result<Node, string>) (getClientStream: Async<System.IO.Stream>) = async {
