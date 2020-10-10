@@ -1,5 +1,6 @@
 module GARbroFS
 open System
+open System.IO
 open System.Collections.Generic
 open System.Collections.Immutable
 
@@ -97,8 +98,8 @@ let loadArchive path =
     try
         let av = new GameRes.ArcView(path)
         let signature = av.View.ReadUInt32(0L)
-        // TODO: do extensions too? there might be formats without signatures
         GameRes.FormatCatalog.Instance.LookupSignature<GameRes.ArchiveFormat>(signature)
+        |> Seq.append (GameRes.FormatCatalog.Instance.LookupExtension<GameRes.ArchiveFormat>(Path.GetExtension(path).TrimStart('.')))
         |> openArc av
         ||> treeFromArc
         |> Ok
