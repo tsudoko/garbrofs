@@ -9,6 +9,8 @@ module Errstr =
     [<Literal>]
     let Einuse = "file in use"
     [<Literal>]
+    let Eisdir = "file is a directory"
+    [<Literal>]
     let Eisopen = "file already open for I/O"
     [<Literal>]
     let Enoauth = "no authentication required"
