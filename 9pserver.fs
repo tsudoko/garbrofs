@@ -123,9 +123,9 @@ let handle attachHandler session tag msg =
             if dirs = List.empty && wnames.Length <> 0 then
                 session, Rerror Enotexist // FIXME: this breaks create attempts
             else if e.IsOpen then
-                session, Rerror Eisopen
+                session, Rerror "walk of an open file"
             else if newfid <> fid && session.Fids.TryFind(newfid).IsSome then
-                session, Rerror Einuse
+                session, Rerror "new fid in use"
             else
                 { session with Fids = session.Fids.Add(newfid, NodeWithState.fromNode newRoot) }, Rwalk (dirs |> List.map (fun d -> d.Stat.Qid) |> List.toArray)
     | Topen (fid, mode) ->
